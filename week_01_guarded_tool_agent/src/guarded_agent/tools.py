@@ -38,6 +38,9 @@ class ToolRegistry:
             raise ValueError(f"duplicate tool name: {tool.name}")
         self._tools[tool.name] = tool
 
+    def __contains__(self, name: str) -> bool:
+        return name in self._tools
+
     def names(self) -> list[str]:
         return sorted(self._tools)
 

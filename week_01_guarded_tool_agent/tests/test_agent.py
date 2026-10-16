@@ -1,13 +1,17 @@
 import pytest
 
-from guarded_agent import Agent, FakeClient, LLMResponse, ToolCall, ToolRegistry, default_tools
+from guarded_agent import (
+    Agent, FakeClient, LLMResponse, Policy, ToolCall, ToolRegistry, default_tools,
+)
 from guarded_agent.llm import parse_ollama_message
 from guarded_agent.tools import safe_eval
 
 
 def make_agent(responses, max_steps=6):
     llm = FakeClient(responses)
-    return Agent(llm, ToolRegistry(default_tools()), max_steps=max_steps), llm
+    agent = Agent(llm, ToolRegistry(default_tools()), max_steps=max_steps,
+                  policy=Policy.allow_all())
+    return agent, llm
 
 
 def test_final_answer_without_tools():

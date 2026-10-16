@@ -1,0 +1,8 @@
+{
+  "default": "deny",
+  "tools": {
+    "calculator": {"verdict": "allow",
+                   "rules": [{"arg": "expression", "type": "max_length", "value": 200}]},
+    "current_time": "allow"
+  }
+}

@@ -33,3 +33,23 @@ A: `FakeClient` replays scripted `LLMResponse` objects and records the messages 
 Check: `llm.py` `FakeClient`. **PASS**
 
 **Day 1 score: 7/7**
+
+## Day 2 (2026-10-16)
+
+**Q8. A tool is marked `allow` but the model passes `path: "../secrets.txt"` and the tool has a `path_within: workspace` rule. What happens?**
+A: Argument rules are checked before the verdict, so the call becomes `deny` with reason `argument rule: ...`, the tool never runs and the approver is not asked.
+Check: `policy.py` `Policy.check`, tests `test_rule_violation_denies_even_allowed_tool_and_skips_approver`, `test_path_within`. Ran `Policy.check` on `../a`: `deny`. **PASS**
+
+**Q9. A tool is `ask` but no approver was passed to the Agent. Does it run?**
+A: No. `Policy.decide` appends "no approver configured, treated as deny" and `approved` stays False.
+Check: `policy.py` `Policy.decide`, test `test_ask_without_approver_is_denied`. Ran it: reason `tool 'x' is ask; no approver configured, treated as deny`. **PASS**
+
+**Q10. What does an `Agent` do if you forget to pass a policy?**
+A: It builds `Policy(default="deny")`, so every registered tool is blocked (fail closed, D11).
+Check: `agent.py` `Agent.__init__`, test `test_agent_without_policy_fails_closed`. **PASS**
+
+**Q11. How would a symlink inside the workspace that points outside be handled by `path_within`?**
+A: Both paths are `resolve()`d, which follows the symlink, so the real target lies outside the root and the call is denied.
+Check: `policy.py` `ArgRule.violation`, test `test_path_within_blocks_symlink_escape`. **PASS**
+
+**Day 2 score: 4/4 (running total 11/11)**

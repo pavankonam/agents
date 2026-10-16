@@ -51,3 +51,37 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** The loop stops after 6 model turns and returns a clear "step limit reached" result.
 **Why:** Small models sometimes loop on tool calls. A hard cap keeps runs bounded.
+
+## D10. Three verdicts: allow, ask, deny (2026-10-16)
+
+**Decision:** Each tool in `policy.json` gets one verdict. `allow` runs, `ask` runs only after an approval callback says yes, `deny` never runs.
+**Why:** It matches how people already think about agent permissions (the allow / ask / deny model used by coding agents and MCP clients) and is small enough to audit by eye.
+**Alternatives:** Numeric risk scores (hard to reason about), role based access (overkill for one user on a laptop).
+
+## D11. Fail closed everywhere (2026-10-16)
+
+**Decision:** The policy default is `deny`. An `Agent` built without a policy denies every tool. A tool marked `ask` with no approver is denied. An approver that raises is treated as a no. Unknown verdicts or rule types in `policy.json` raise `ValueError` at load time.
+**Why:** A forgotten setting or a typo must never widen what the agent can do. Tests opt in to `Policy.allow_all()` explicitly.
+**Alternatives:** Default `allow` with a warning (convenient but the exact mistake this project is about).
+
+## D12. Argument rules can only make a verdict stricter (2026-10-16)
+
+**Decision:** Rules (`path_within`, `pattern`, `max_length`, `one_of`) are checked before the verdict is applied. A violation turns the call into `deny` and the approver is never asked.
+**Why:** The model controls the arguments, so arguments must never be able to upgrade a verdict. Skipping the approver on a rule violation also avoids training the human to click yes on obviously bad calls.
+**Alternatives:** Asking the human on violations (approval fatigue), allow rules that grant access (makes bypasses possible).
+
+## D13. `path_within` resolves symlinks and `..` before comparing (2026-10-16)
+
+**Decision:** Both the root and the target are passed through `Path.resolve()` and the target must equal the root or have it as a parent. Relative roots resolve against the folder of `policy.json`.
+**Why:** String prefix checks are the classic sandbox escape (`workspace/../secret`, `workspace_evil/`, symlinks). Day 3 file tools depend on this.
+**Alternatives:** `os.path.commonpath` on unresolved strings (misses symlinks), chroot (not portable to a Mac without root).
+
+## D14. Denials go back to the model as a tool message (2026-10-16)
+
+**Decision:** A blocked call produces `error: denied by policy: <reason>. Do not retry the same call...` as the tool result, and the system prompt tells the model not to repeat denied calls.
+**Why:** Same path as D8: the run continues and the model can explain or choose another approach. The explicit "do not retry" text reduces loops on small models; `max_steps` still caps them.
+
+## D15. Every call leaves a PolicyDecision (2026-10-16)
+
+**Decision:** `Agent._guarded_call` is the only place a tool runs. It returns a `PolicyDecision` (tool, arguments, verdict, reason, approved) for every call, including unknown tools (recorded as `deny`), and `AgentResult.decisions` holds them in order.
+**Why:** It is the success criterion "no tool runs without a recorded policy verdict", and it is exactly the data the day 4 audit log will write.

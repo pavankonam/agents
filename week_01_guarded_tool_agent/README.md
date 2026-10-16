@@ -1,8 +1,25 @@
 # Week 01: Guarded Tool Agent
 
-A small tool calling agent that runs on a **free local model through Ollama**, where every tool call will pass through a permission policy and an audit log. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
+A small tool calling agent that runs on a **free local model through Ollama**, where every tool call passes through a permission policy (and, from day 4, an audit log). See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 1 of 7. Core agent loop, calculator and time tools, tests.
+**Status:** Day 2 of 7. Core agent loop, calculator and time tools, permission policy with argument rules and human approval, tests.
+
+## Permission policy
+
+Edit `policy.json`. Every tool is `allow`, `ask` (you approve on the terminal) or `deny`; unlisted tools use `default` (shipped as `deny`). Argument rules can only make a call stricter:
+
+```json
+{
+  "default": "deny",
+  "tools": {
+    "calculator": {"verdict": "allow",
+                   "rules": [{"arg": "expression", "type": "max_length", "value": 200}]},
+    "current_time": "ask"
+  }
+}
+```
+
+Rule types: `path_within` (path must resolve inside a folder, symlinks followed), `pattern` (regex full match), `max_length`, `one_of`. Blocked calls are returned to the model as `error: denied by policy: ...`. Point to another file with `GUARDED_AGENT_POLICY=path/to/policy.json`.
 
 ## Run it locally
 
@@ -33,7 +50,9 @@ Use another model with `GUARDED_AGENT_MODEL=llama3.2`.
 src/guarded_agent/
   llm.py      OllamaClient (stdlib HTTP) and FakeClient
   tools.py    Tool, ToolRegistry, safe calculator, current_time
-  agent.py    the agent loop with a max_steps guard
+  policy.py   Policy (allow / ask / deny), argument rules, approver
+  agent.py    the agent loop: every tool call goes through the policy
+policy.json   the default policy used by the CLI and quiz_model.py
 tests/        pytest suite using FakeClient
 quiz/         quiz.md (self quiz) and quiz_model.py (quizzes the agent)
 ```
