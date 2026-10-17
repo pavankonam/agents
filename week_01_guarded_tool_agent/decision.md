@@ -85,3 +85,30 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** `Agent._guarded_call` is the only place a tool runs. It returns a `PolicyDecision` (tool, arguments, verdict, reason, approved) for every call, including unknown tools (recorded as `deny`), and `AgentResult.decisions` holds them in order.
 **Why:** It is the success criterion "no tool runs without a recorded policy verdict", and it is exactly the data the day 4 audit log will write.
+
+## D16. Two layers of path confinement for file tools (2026-10-17)
+
+**Decision:** `policy.json` gives `read_file`, `list_dir` and `write_file` a `path_within: workspace` rule, and the tools themselves (`files.py`, `Workspace.resolve`) also resolve every path and refuse anything outside the workspace.
+**Why:** The policy is configuration and can be edited, loosened or replaced with `Policy.allow_all()`. The tool level check makes the sandbox hold even then (defence in depth), while the policy check still blocks escapes before a human is ever asked (D12). Both use `Path.resolve()`, so `..`, absolute paths and symlinks are handled the same way in both layers.
+**Alternatives:** Policy only (one typo opens the disk), tool only (escapes would reach the approver and would not show up as `deny` verdicts).
+
+## D17. Verdicts for the file tools: read and list allow, write ask (2026-10-17)
+
+**Decision:** Shipped `policy.json` marks `read_file` and `list_dir` as `allow` and `write_file` as `ask`, plus a `max_length` rule on `content` (100000 chars).
+**Why:** Reading inside a sandbox is low risk and small models need it to be frictionless. Writing changes state, so a human approves each write. No delete tool exists at all: the safest permission is a tool that is never registered.
+**Alternatives:** `ask` for reads too (approval fatigue), a `delete_file` tool behind `ask` (not needed for any milestone; day 7 tests that a prompt injection asking for deletion has nothing to call).
+
+## D18. Size limits and text only reads (2026-10-17)
+
+**Decision:** `read_file` returns at most 20000 bytes and appends `[truncated: showed N of M bytes]`; files with a NUL byte in the first 1 KB are refused as binary. `write_file` refuses content over 100000 bytes. `list_dir` shows at most 200 entries.
+**Why:** A small local model has a small context window, and dumping a large or binary file into it wastes the context and confuses the model. Saying that output was truncated keeps the model honest about what it saw.
+
+## D19. Sandbox errors become tool errors (2026-10-17)
+
+**Decision:** `SandboxError` subclasses `ValueError`, and `ToolRegistry.call` turns any `ValueError` into `error: <tool>: <message>`.
+**Why:** Same principle as D8: a blocked path is reported to the model so it can explain or correct itself; the run never crashes.
+
+## D20. Workspace is a folder in the project, configurable (2026-10-17)
+
+**Decision:** The CLI and `quiz_model.py` use `week_01_guarded_tool_agent/workspace/` (override with `GUARDED_AGENT_WORKSPACE`). It ships with a sample `notes.txt` used by the quiz.
+**Why:** A known folder with known content makes the real model quiz deterministic. If the override points somewhere other than the policy's `path_within` root, the tool layer still confines writes to the override folder, so the worst case is extra denials, never extra access.

@@ -56,6 +56,8 @@ class ToolRegistry:
             return str(tool.func(**arguments))
         except TypeError as exc:
             return f"error: bad arguments for '{name}': {exc}"
+        except ValueError as exc:  # includes SandboxError from the file tools
+            return f"error: {name}: {exc}"
         except Exception as exc:  # tool bugs must not crash the agent
             return f"error: {name} failed: {exc}"
 

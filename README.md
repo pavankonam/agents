@@ -18,4 +18,4 @@ The daily process is described in [PLAYBOOK.md](PLAYBOOK.md) and the history is 
 
 | Week | Project | Topic | Status |
 | --- | --- | --- | --- |
-| 01 | [Guarded Tool Agent](week_01_guarded_tool_agent/) | Tool calling agent with permission policies, approvals and audit logs | In progress (day 2 of 7) |
+| 01 | [Guarded Tool Agent](week_01_guarded_tool_agent/) | Tool calling agent with permission policies, approvals and audit logs | In progress (day 3 of 7) |

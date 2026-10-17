@@ -1,0 +1,3 @@
+Project codename: BLUE HERON
+Launch window: 2026-10-21
+This file is sample data for the file tool demos and quiz_model.py.

@@ -3,6 +3,13 @@
   "tools": {
     "calculator": {"verdict": "allow",
                    "rules": [{"arg": "expression", "type": "max_length", "value": 200}]},
-    "current_time": "allow"
+    "current_time": "allow",
+    "read_file": {"verdict": "allow",
+                  "rules": [{"arg": "path", "type": "path_within", "value": "workspace"}]},
+    "list_dir": {"verdict": "allow",
+                 "rules": [{"arg": "path", "type": "path_within", "value": "workspace"}]},
+    "write_file": {"verdict": "ask",
+                   "rules": [{"arg": "path", "type": "path_within", "value": "workspace"},
+                             {"arg": "content", "type": "max_length", "value": 100000}]}
   }
 }

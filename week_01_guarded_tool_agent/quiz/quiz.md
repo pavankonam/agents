@@ -53,3 +53,23 @@ A: Both paths are `resolve()`d, which follows the symlink, so the real target li
 Check: `policy.py` `ArgRule.violation`, test `test_path_within_blocks_symlink_escape`. **PASS**
 
 **Day 2 score: 4/4 (running total 11/11)**
+
+## Day 3 (2026-10-17)
+
+**Q12. With the shipped `policy.json`, what happens to `write_file(path="../x", content="a")` and to `write_file(path="a.txt", content="a")`?**
+A: The first breaks the `path_within: workspace` rule, so it is `deny` and no human is asked. The second passes the rules and gets the tool's verdict, `ask`.
+Check: `policy.json`, `policy.py` `Policy.check`, test `test_write_escape_never_reaches_the_human`. Ran `Policy.check`: `deny`, `ask`. **PASS**
+
+**Q13. If someone runs the agent with `Policy.allow_all()`, can `read_file` read `../policy.json`?**
+A: No. The tool itself calls `Workspace.resolve`, which raises `SandboxError`, and the model gets `error: read_file: path '../policy.json' is outside the workspace`.
+Check: `files.py` `Workspace.resolve`, `tools.py` `ToolRegistry.call`, test `test_tool_layer_blocks_escape_even_with_allow_all`. Ran it: exactly that message. **PASS**
+
+**Q14. The model calls `list_dir` with no `path` argument. Does the `path_within` rule block it?**
+A: No. Rules skip missing arguments (`ArgRule.violation` returns None), so the verdict is `allow`, and the tool defaults to `"."`, the workspace root, which is inside the sandbox.
+Check: `policy.py` `ArgRule.violation`, `files.py` `list_dir`. Ran it: verdict `allow`, output `notes.txt  (file)`. **PASS**
+
+**Q15. What does the model see when it reads a 20001 byte text file?**
+A: The first 20000 bytes followed by `[truncated: showed 20000 of 20001 bytes]`.
+Check: `files.py` `MAX_READ_BYTES`, test `test_read_truncates_large_files_and_refuses_binary`. Ran it on a 20001 byte file: matches. **PASS**
+
+**Day 3 score: 4/4 (running total 15/15)**

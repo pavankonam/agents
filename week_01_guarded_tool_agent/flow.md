@@ -1,6 +1,6 @@
 # Flow: Guarded Tool Agent
 
-Status: **Day 2**. Solid boxes exist today, dashed boxes are planned (day in brackets).
+Status: **Day 3**. Solid boxes exist today, dashed boxes are planned (day in brackets).
 
 ```mermaid
 flowchart TD
@@ -27,13 +27,15 @@ flowchart TD
     subgraph Tools
       C[calculator]
       CT[current_time]
-      F[file tools  [day 3]]
+      F[read_file / list_dir / write_file<br/>Workspace.resolve: second sandbox check]
       MCP[MCP server tools  [day 5]]
     end
     T --- Tools
 
     classDef planned stroke-dasharray: 5 5;
-    class L,F,MCP planned;
+    F -->|path outside workspace| SE[error: SandboxError]
+    SE -->|tool error message| A
+    class L,MCP planned;
 ```
 
 ## How it works today
@@ -48,5 +50,7 @@ flowchart TD
    * Blocked calls return `error: denied by policy: <reason>` to the model so it can explain instead of crashing.
 5. Each call leaves a `PolicyDecision` (tool, arguments, verdict, reason, approved) in `AgentResult.decisions`.
 6. After `max_steps` model turns the run stops with `stopped_reason = "max_steps"`.
+
+7. File tools (`files.py`) work inside one workspace folder. A path is checked twice: by the `path_within` rule in `policy.json` (denied before the tool or a human sees it) and again by `Workspace.resolve` inside the tool, so even `Policy.allow_all()` cannot read or write outside the workspace. Shipped verdicts: `read_file` and `list_dir` allow, `write_file` ask.
 
 `Policy.from_file("policy.json")` loads the policy. Unlisted tools use `default` (shipped as `deny`), and relative `path_within` roots resolve against the policy file's folder.
