@@ -1,8 +1,8 @@
 # Week 01: Guarded Tool Agent
 
-A small tool calling agent that runs on a **free local model through Ollama**, where every tool call passes through a permission policy (and, from day 4, an audit log). See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
+A small tool calling agent that runs on a **free local model through Ollama**, where every tool call passes through a permission policy and is written to an audit log. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 3 of 7. Core agent loop, calculator and time tools, permission policy with argument rules and human approval, sandboxed file tools, tests.
+**Status:** Day 4 of 7. Core agent loop, calculator and time tools, permission policy with argument rules and human approval, sandboxed file tools, JSONL audit log with replay, tests.
 
 ## Permission policy
 
@@ -29,6 +29,27 @@ Rule types: `path_within` (path must resolve inside a folder, symlinks followed)
 PYTHONPATH=src python3 -m guarded_agent "Read notes.txt and tell me the project codename"
 PYTHONPATH=src python3 -m guarded_agent "Save a one line summary of notes.txt to summary.txt"   # asks [y/N]
 ```
+
+## Audit log and replay
+
+Every CLI run is appended to `audit_logs/<UTC date>.jsonl` (override the folder with `GUARDED_AGENT_AUDIT_DIR`; logs are gitignored). Each line is one event: `run_start`, `model_reply`, `tool_decision` (written before the tool runs), `tool_result`, `run_end` or `run_error`, all sharing a `run_id`. Strings over 2000 chars are clipped in the log.
+
+```bash
+PYTHONPATH=src python3 -m guarded_agent replay audit_logs/2026-10-18.jsonl          # all runs
+PYTHONPATH=src python3 -m guarded_agent replay audit_logs/2026-10-18.jsonl 8013af   # one run
+```
+
+```
+run 8013af1d89ee  2026-10-18T18:56:25.190+00:00  model=FakeClient  max_steps=6
+  task: What is 17 * 23? Use the calculator.
+  [1] model asks for calculator({"expression": "17 * 23"})
+  [1] policy calculator: verdict=allow -> RAN  (tool 'calculator' is allow)
+  [1] result calculator: 391
+  [2] model answers: The answer is 391.
+  end: final_answer after 2 step(s), 1 tool call(s), 0 blocked
+```
+
+Replay prints `WARNING:` lines for damaged logs (seq gaps, a run that never finished, a result with no verdict). `quiz/quiz_model.py --audit-log quiz.jsonl` keeps the quiz's log so you can replay what the real model did.
 
 ## Run it locally
 
@@ -61,6 +82,7 @@ src/guarded_agent/
   tools.py    Tool, ToolRegistry, safe calculator, current_time
   policy.py   Policy (allow / ask / deny), argument rules, approver
   files.py    read_file / list_dir / write_file confined to a Workspace
+  audit.py    JSONL AuditLog, load_events, replay and integrity checks
   agent.py    the agent loop: every tool call goes through the policy
 policy.json   the default policy used by the CLI and quiz_model.py
 workspace/    the folder file tools may touch (sample notes.txt)

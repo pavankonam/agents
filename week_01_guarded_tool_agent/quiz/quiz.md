@@ -73,3 +73,23 @@ A: The first 20000 bytes followed by `[truncated: showed 20000 of 20001 bytes]`.
 Check: `files.py` `MAX_READ_BYTES`, test `test_read_truncates_large_files_and_refuses_binary`. Ran it on a 20001 byte file: matches. **PASS**
 
 **Day 3 score: 4/4 (running total 15/15)**
+
+## Day 4 (2026-10-18)
+
+**Q16. With an audit log attached, is a tool's verdict written before or after the tool runs?**
+A: Before. `_guarded_call` writes `tool_decision` right after the policy decides, then calls the tool, then the loop writes `tool_result`. A tool that crashes the process still leaves its verdict on disk.
+Check: `agent.py` `Agent._guarded_call`, test `test_verdict_is_on_disk_before_the_tool_runs` (a spy tool reads the log while running and sees `tool_decision` as the last line). **PASS**
+
+**Q17. An approved `write_file` call writes 50000 chars. What ends up in the file and what in the log?**
+A: The file gets all 50000 chars. The log's `tool_decision.arguments.content` holds the first 2000 chars plus `...[clipped 48000 chars]` (2024 chars), and `AgentResult.decisions` keeps the full value.
+Check: `audit.py` `clip`, `MAX_FIELD_CHARS`, decision D23. Ran it: file 50000 bytes, logged content 2024 chars ending `...[clipped 48000 chars]`, decision arguments 50000. **PASS**
+
+**Q18. Ollama is not running when the CLI starts a run. What does the log contain?**
+A: `run_start`, then `run_error` with `ConnectionError: Could not reach Ollama ...`; the exception is still raised to the caller, and `check_run` reports no problems because the run did finish (with an error).
+Check: `agent.py` `Agent.run`, test `test_llm_crash_writes_run_error_and_reraises`. **PASS**
+
+**Q19. The process is killed while writing the last line of a run. What does `replay` show?**
+A: The broken line is skipped and counted (`(skipped 1 malformed line(s))`), and the run gets `WARNING: run did not finish (no run_end or run_error)`.
+Check: `audit.py` `load_events`, `check_run`, `replay`, test `test_replay_survives_damaged_logs`. Ran it on a log with the last 20 bytes cut: both lines printed. **PASS**
+
+**Day 4 score: 4/4 (running total 19/19)**

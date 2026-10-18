@@ -1,6 +1,7 @@
 """Guarded Tool Agent: a local Ollama agent whose tool calls are policy checked."""
 
 from .agent import Agent, AgentResult
+from .audit import AuditLog, load_events, replay
 from .files import SandboxError, Workspace, file_tools
 from .llm import FakeClient, LLMResponse, OllamaClient, ToolCall
 from .policy import Policy, PolicyDecision, console_approver
@@ -11,5 +12,6 @@ __all__ = [
     "ToolCall", "Tool", "ToolRegistry", "default_tools",
     "Policy", "PolicyDecision", "console_approver",
     "SandboxError", "Workspace", "file_tools",
+    "AuditLog", "load_events", "replay",
 ]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

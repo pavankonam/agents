@@ -1,6 +1,6 @@
 # Flow: Guarded Tool Agent
 
-Status: **Day 3**. Solid boxes exist today, dashed boxes are planned (day in brackets).
+Status: **Day 4**. Solid boxes exist today, dashed boxes are planned (day in brackets).
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,9 @@ flowchart TD
     H -->|yes| T
     H -->|no / none / raised| E
     G --> D[PolicyDecision recorded<br/>AgentResult.decisions]
-    D -.-> L[(Audit log JSONL  [day 4])]
+    G -->|tool_decision written<br/>before the tool runs| L[(Audit log JSONL<br/>audit_logs/DATE.jsonl)]
+    A -->|run_start / model_reply /<br/>tool_result / run_end / run_error| L
+    L --> RP[replay: timeline + integrity WARNINGs]
     T -->|tool result message| A
     E -->|tool error message| A
     UK -->|tool error message| A
@@ -35,7 +37,7 @@ flowchart TD
     classDef planned stroke-dasharray: 5 5;
     F -->|path outside workspace| SE[error: SandboxError]
     SE -->|tool error message| A
-    class L,MCP planned;
+    class MCP planned;
 ```
 
 ## How it works today
@@ -52,5 +54,7 @@ flowchart TD
 6. After `max_steps` model turns the run stops with `stopped_reason = "max_steps"`.
 
 7. File tools (`files.py`) work inside one workspace folder. A path is checked twice: by the `path_within` rule in `policy.json` (denied before the tool or a human sees it) and again by `Workspace.resolve` inside the tool, so even `Policy.allow_all()` cannot read or write outside the workspace. Shipped verdicts: `read_file` and `list_dir` allow, `write_file` ask.
+
+8. With an `AuditLog`, every step is appended to a JSONL file: `run_start` (task, model, tools, policy default), `model_reply` per step, `tool_decision` for each call (written before the tool runs), `tool_result`, and `run_end` or `run_error`. Events share a `run_id` and carry a `seq`. Strings over 2000 chars are clipped in the log only. `python -m guarded_agent replay <log> [run_id]` prints the timeline and warns about gaps, unfinished runs or results without a verdict.
 
 `Policy.from_file("policy.json")` loads the policy. Unlisted tools use `default` (shipped as `deny`), and relative `path_within` roots resolve against the policy file's folder.

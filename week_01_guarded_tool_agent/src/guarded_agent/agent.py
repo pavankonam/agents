@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .audit import AuditLog
 from .llm import LLMClient, ToolCall
 from .policy import Approver, Policy, PolicyDecision, denial_message
 from .tools import ToolRegistry
@@ -32,7 +33,8 @@ class AgentResult:
 class Agent:
     def __init__(self, llm: LLMClient, registry: ToolRegistry,
                  max_steps: int = 6, system_prompt: str = SYSTEM_PROMPT,
-                 policy: Policy | None = None, approver: Approver | None = None):
+                 policy: Policy | None = None, approver: Approver | None = None,
+                 audit: AuditLog | None = None):
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
         self.llm = llm
@@ -42,8 +44,32 @@ class Agent:
         self.approver = approver
         self.max_steps = max_steps
         self.system_prompt = system_prompt
+        self.audit = audit  # None means no log file; decisions are still in AgentResult
+
+    def _log(self, type: str, **fields) -> None:
+        if self.audit is not None:
+            self.audit.write(type, **fields)
 
     def run(self, task: str) -> AgentResult:
+        if self.audit is not None:
+            self.audit.start_run(
+                task=task,
+                model=getattr(self.llm, "model", type(self.llm).__name__),
+                max_steps=self.max_steps,
+                policy_default=self.policy.default,
+                tools=self.registry.names(),
+            )
+        try:
+            result = self._run(task)
+        except Exception as exc:  # log, then let the caller see the real error
+            self._log("run_error", error=f"{type(exc).__name__}: {exc}")
+            raise
+        self._log("run_end", answer=result.answer, stopped_reason=result.stopped_reason,
+                  steps=result.steps, tool_calls=len(result.tool_calls),
+                  blocked=sum(1 for d in result.decisions if not d.approved))
+        return result
+
+    def _run(self, task: str) -> AgentResult:
         messages: list[dict] = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": task},
@@ -62,14 +88,19 @@ class Agent:
                     for c in reply.tool_calls
                 ]
             messages.append(assistant_msg)
+            self._log("model_reply", step=step, content=reply.content,
+                      tool_calls=[{"name": c.name, "arguments": c.arguments}
+                                  for c in reply.tool_calls])
 
             if not reply.tool_calls:
                 return AgentResult(reply.content, messages, made, decisions, step)
 
             for call in reply.tool_calls:
                 made.append(call)
-                output, decision = self._guarded_call(call)
+                output, decision = self._guarded_call(call, step)
                 decisions.append(decision)
+                self._log("tool_result", step=step, tool=call.name, ran=decision.approved,
+                          output=output)
                 messages.append({"role": "tool", "tool_name": call.name, "content": output})
 
         return AgentResult(
@@ -78,13 +109,18 @@ class Agent:
             stopped_reason="max_steps",
         )
 
-    def _guarded_call(self, call: ToolCall) -> tuple[str, PolicyDecision]:
-        """The only place a tool runs. Every call leaves a PolicyDecision behind."""
+    def _guarded_call(self, call: ToolCall, step: int = 0) -> tuple[str, PolicyDecision]:
+        """The only place a tool runs. Every call leaves a PolicyDecision behind,
+        and with an audit log the verdict is written to disk before the tool runs."""
         args = call.arguments if isinstance(call.arguments, dict) else {"_raw": call.arguments}
         if call.name not in self.registry:
             d = PolicyDecision(call.name, args, "deny", "unknown tool")
+        else:
+            d = self.policy.decide(call.name, args, self.approver)
+        self._log("tool_decision", step=step, tool=d.tool, arguments=d.arguments,
+                  verdict=d.verdict, reason=d.reason, approved=d.approved)
+        if call.name not in self.registry:
             return self.registry.call(call.name, args), d
-        d = self.policy.decide(call.name, args, self.approver)
         if not d.approved:
             return denial_message(d), d
         return self.registry.call(call.name, args), d

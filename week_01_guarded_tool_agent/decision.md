@@ -112,3 +112,30 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** The CLI and `quiz_model.py` use `week_01_guarded_tool_agent/workspace/` (override with `GUARDED_AGENT_WORKSPACE`). It ships with a sample `notes.txt` used by the quiz.
 **Why:** A known folder with known content makes the real model quiz deterministic. If the override points somewhere other than the policy's `path_within` root, the tool layer still confines writes to the override folder, so the worst case is extra denials, never extra access.
+
+## D21. JSONL, one event per line, appended per event (2026-10-18)
+
+**Decision:** `audit.py` writes one JSON object per line to an append only file, opening and closing the file for every event. Event types: `run_start`, `model_reply`, `tool_decision`, `tool_result`, `run_end`, `run_error`. Each has `ts` (UTC, ms), `run_id` (12 hex chars) and `seq` (0, 1, 2 ... within a run).
+**Why:** JSONL can be appended without rewriting, read with `jq` or `grep`, and a crash can damage at most the last line. Opening per event puts each line on disk before the next step runs, which matters more than speed for a log of a few dozen lines per run. `seq` makes missing or duplicated lines detectable.
+**Alternatives:** SQLite (atomic, but not human readable and harder to diff), Python `logging` (formats text, not structured events), one JSON array per run (must be rewritten, lost on crash).
+
+## D22. The verdict is logged before the tool runs (2026-10-18)
+
+**Decision:** `Agent._guarded_call` writes `tool_decision` (tool, arguments, verdict, reason, approved) right after the policy decides and before the tool is called; `tool_result` follows with `ran` and the output, including denial messages.
+**Why:** The success criterion is "no tool runs without a recorded policy verdict". If the verdict were written with the result, a tool that hangs or kills the process would leave no record. Tested by a spy tool that reads the log while it runs.
+
+## D23. Long strings are clipped in the log, not in the run (2026-10-18)
+
+**Decision:** Any string over 2000 chars in an event (file contents, tool output, model text) is stored as its first 2000 chars plus `...[clipped N chars]`. The agent and the tools still see the full values.
+**Why:** One `write_file` of 100000 chars would otherwise dominate the log. The audit question is "what was attempted and was it allowed", which the first 2000 chars and the length answer. Clipping only the log copy keeps behaviour identical with and without auditing.
+**Alternatives:** Hash the content (proves identity but hides what was written), store full values (log bloat, and secrets copied around in full).
+
+## D24. Audit is optional for the library, always on for the CLI and quiz (2026-10-18)
+
+**Decision:** `Agent(audit=None)` writes nothing (decisions are still in `AgentResult.decisions`). The CLI always appends to `audit_logs/<UTC date>.jsonl` (override with `GUARDED_AGENT_AUDIT_DIR`), and `quiz_model.py` always logs to a temp file (or `--audit-log PATH`) and fails a scenario whose run is incomplete in the log. `audit_logs/` and `*.jsonl` stay gitignored.
+**Why:** Unit tests and library users should not get files they did not ask for, while every real run is audited. Checking the log in the quiz turns the success criterion into a test against the real model too. Logs can contain file contents, so they never go to GitHub.
+
+## D25. Replay checks integrity, not just formatting (2026-10-18)
+
+**Decision:** `replay(path, run_id_prefix)` (CLI: `python -m guarded_agent replay <log> [run_id]`) prints each run as a timeline (`[step] model asks / policy -> RAN|BLOCKED / result / answers`, then `end`), skips malformed lines with a count, and adds `WARNING:` lines from `check_run` when seq numbers have gaps, a run never finished, or a tool result has no verdict before it.
+**Why:** A replay that silently shows a damaged log would hide exactly the case an audit is for. A failed LLM call is logged as `run_error` (and still raised), so "never finished" really means the process died.

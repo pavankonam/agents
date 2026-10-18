@@ -32,7 +32,7 @@ A developer who wants to run a local agent on their laptop and know exactly what
 * [x] **Day 1 (Thu 10/15):** PRD, decision log, flow, quiz. Core agent loop with a pluggable LLM client (`OllamaClient`, `FakeClient`), tool registry with JSON schemas, two safe tools (`calculator`, `current_time`), max step guard, tests.
 * [x] **Day 2 (Fri 10/16):** Permission policy (`allow` / `ask` / `deny`) loaded from `policy.json`, argument rules, approval callback. Denied calls are reported back to the model instead of crashing.
 * [x] **Day 3 (Sat 10/17):** File tools (`read_file`, `write_file`, `list_dir`) sandboxed to a workspace folder. Path rules enforced by the policy.
-* [ ] **Day 4 (Sun 10/18):** JSONL audit log for every step and a `replay` command that prints a run as a readable timeline.
+* [x] **Day 4 (Sun 10/18):** JSONL audit log for every step and a `replay` command that prints a run as a readable timeline.
 * [ ] **Day 5 (Mon 10/19):** MCP client: load tools from any stdio MCP server and route them through the policy.
 * [ ] **Day 6 (Tue 10/20):** CLI (`python -m guarded_agent "task"`), README demo, `quiz_model.py` scenarios against real Ollama.
 * [ ] **Day 7 (Wed 10/21):** Hardening and close out: prompt injection test (a file that tells the agent to delete things), results table, retro.
