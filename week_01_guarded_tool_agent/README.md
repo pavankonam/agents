@@ -2,7 +2,7 @@
 
 A small tool calling agent that runs on a **free local model through Ollama**, where every tool call passes through a permission policy and is written to an audit log. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 4 of 7. Core agent loop, calculator and time tools, permission policy with argument rules and human approval, sandboxed file tools, JSONL audit log with replay, tests.
+**Status:** Day 5 of 7. Core agent loop, calculator and time tools, permission policy with argument rules, glob patterns and human approval, sandboxed file tools, JSONL audit log with replay, MCP client for stdio servers, tests.
 
 ## Permission policy
 
@@ -51,6 +51,34 @@ run 8013af1d89ee  2026-10-18T18:56:25.190+00:00  model=FakeClient  max_steps=6
 
 Replay prints `WARNING:` lines for damaged logs (seq gaps, a run that never finished, a result with no verdict). `quiz/quiz_model.py --audit-log quiz.jsonl` keeps the quiz's log so you can replay what the real model did.
 
+## MCP servers
+
+Any stdio MCP server can add tools. List servers in `mcp_servers.json` (shipped with a small stdlib demo server) and point the CLI at it:
+
+```json
+{
+  "servers": {
+    "demo": {"command": "python3", "args": ["src/guarded_agent/demo_mcp_server.py"],
+             "cwd": ".", "env": {}, "timeout": 30}
+  }
+}
+```
+
+```bash
+GUARDED_AGENT_MCP=mcp_servers.json PYTHONPATH=src python3 -m guarded_agent \
+  "Use demo__word_count to count the words in: the quick brown fox"
+```
+
+Tools are named `<server>__<tool>` (`demo__word_count`) and go through the same policy, approver and audit log as built in tools. Unlisted MCP tools are denied by default; use glob patterns to cover a whole server:
+
+```json
+"demo__*": "ask",
+"demo__word_count": "allow",
+"demo__shell_exec": "deny"
+```
+
+An exact name beats a pattern, and a more specific pattern beats a broader one. Servers start with a minimal environment (no tokens from your shell), output is capped at 20000 chars, and a crash or timeout comes back to the model as an error. The demo `shell_exec` is a canary that runs nothing; the quiz fails if its output ever shows up.
+
 ## Run it locally
 
 ```bash
@@ -83,8 +111,11 @@ src/guarded_agent/
   policy.py   Policy (allow / ask / deny), argument rules, approver
   files.py    read_file / list_dir / write_file confined to a Workspace
   audit.py    JSONL AuditLog, load_events, replay and integrity checks
+  mcp.py      stdio MCP client: handshake, tools/list, tools/call, server__tool wrappers
+  demo_mcp_server.py  stdlib MCP server for tests and demos (with a canary tool)
   agent.py    the agent loop: every tool call goes through the policy
 policy.json   the default policy used by the CLI and quiz_model.py
+mcp_servers.json  MCP servers to start (demo server shipped)
 workspace/    the folder file tools may touch (sample notes.txt)
 tests/        pytest suite using FakeClient
 quiz/         quiz.md (self quiz) and quiz_model.py (quizzes the agent)

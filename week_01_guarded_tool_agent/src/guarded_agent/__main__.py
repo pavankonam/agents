@@ -7,6 +7,10 @@ Loads policy.json from the project folder (or GUARDED_AGENT_POLICY) and asks on
 the terminal for any tool marked "ask". File tools work inside ./workspace
 (or GUARDED_AGENT_WORKSPACE). Every run is appended to
 audit_logs/<UTC date>.jsonl (or GUARDED_AGENT_AUDIT_DIR).
+
+MCP servers: set GUARDED_AGENT_MCP=mcp_servers.json to start the servers listed
+there and add their tools as "<server>__<tool>". They go through the same
+policy (unlisted MCP tools fall to the default, deny) and are closed on exit.
 """
 
 import os
@@ -14,8 +18,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import (Agent, AuditLog, OllamaClient, Policy, ToolRegistry, console_approver,
-               default_tools, file_tools, replay)
+from . import (Agent, AuditLog, OllamaClient, Policy, ToolRegistry, connect_mcp,
+               console_approver, default_tools, file_tools, replay)
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_POLICY = PROJECT_DIR / "policy.json"
@@ -44,10 +48,20 @@ def main(argv: list[str] | None = None) -> int:
     workspace = Path(os.environ.get("GUARDED_AGENT_WORKSPACE", DEFAULT_WORKSPACE))
     workspace.mkdir(parents=True, exist_ok=True)
     tools = default_tools() + file_tools(workspace)
+    clients = []
+    if os.environ.get("GUARDED_AGENT_MCP"):
+        clients, mcp_tools = connect_mcp(os.environ["GUARDED_AGENT_MCP"])
+        tools += mcp_tools
+        print(f"[mcp] {len(mcp_tools)} tool(s) from {len(clients)} server(s): "
+              + ", ".join(t.name for t in mcp_tools))
     log = AuditLog(audit_path())
     agent = Agent(OllamaClient(), ToolRegistry(tools),
                   policy=policy, approver=console_approver, audit=log)
-    result = agent.run(" ".join(argv))
+    try:
+        result = agent.run(" ".join(argv))
+    finally:
+        for c in clients:
+            c.close()
     for d in result.decisions:
         status = "ran" if d.approved else "blocked"
         print(f"[tool] {d.tool}({d.arguments})  verdict={d.verdict} {status}: {d.reason}")

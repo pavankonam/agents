@@ -10,6 +10,10 @@
                  "rules": [{"arg": "path", "type": "path_within", "value": "workspace"}]},
     "write_file": {"verdict": "ask",
                    "rules": [{"arg": "path", "type": "path_within", "value": "workspace"},
-                             {"arg": "content", "type": "max_length", "value": 100000}]}
+                             {"arg": "content", "type": "max_length", "value": 100000}]},
+    "demo__*": "ask",
+    "demo__word_count": {"verdict": "allow",
+                         "rules": [{"arg": "text", "type": "max_length", "value": 5000}]},
+    "demo__shell_exec": "deny"
   }
 }

@@ -14,13 +14,20 @@ policy.json shape:
   "tools": {
     "calculator": "allow",
     "write_file": {"verdict": "ask",
-                   "rules": [{"arg": "path", "type": "path_within", "value": "./workspace"}]}
+                   "rules": [{"arg": "path", "type": "path_within", "value": "./workspace"}]},
+    "demo__*": "ask"
   }
 }
+
+Tool names may be glob patterns (`*`, `?`, `[...]`), mainly for MCP tools named
+"<server>__<tool>". An exact name always wins; otherwise the most specific
+matching pattern (most literal characters) wins; otherwise `default` applies
+(decision D29).
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -125,17 +132,29 @@ class Policy:
 
     # ---------- checking ----------
 
+    def lookup(self, tool: str) -> tuple[str | None, ToolPolicy | None]:
+        """(matching key, its ToolPolicy): exact name first, then the longest glob."""
+        if tool in self.tools:
+            return tool, self.tools[tool]
+        patterns = [k for k in self.tools if any(ch in k for ch in "*?[")]
+        hits = [k for k in patterns if fnmatch.fnmatchcase(tool, k)]
+        if not hits:
+            return None, None
+        best = max(hits, key=lambda k: (len(k.replace("*", "")), len(k)))
+        return best, self.tools[best]
+
     def check(self, tool: str, arguments: dict[str, Any]) -> PolicyDecision:
-        tp = self.tools.get(tool)
+        key, tp = self.lookup(tool)
         if tp is None:
             return PolicyDecision(tool, arguments, self.default, f"default policy ({self.default})")
+        via = "" if key == tool else f" (via pattern '{key}')"
         if tp.verdict == "deny":
-            return PolicyDecision(tool, arguments, "deny", f"tool '{tool}' is denied by policy")
+            return PolicyDecision(tool, arguments, "deny", f"tool '{tool}' is denied by policy{via}")
         for rule in tp.rules:
             why = rule.violation(arguments, self.base_dir)
             if why:
                 return PolicyDecision(tool, arguments, "deny", f"argument rule: {why}")
-        return PolicyDecision(tool, arguments, tp.verdict, f"tool '{tool}' is {tp.verdict}")
+        return PolicyDecision(tool, arguments, tp.verdict, f"tool '{tool}' is {tp.verdict}{via}")
 
     def decide(self, tool: str, arguments: dict[str, Any],
                approver: Approver | None = None) -> PolicyDecision:

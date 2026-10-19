@@ -93,3 +93,23 @@ A: The broken line is skipped and counted (`(skipped 1 malformed line(s))`), and
 Check: `audit.py` `load_events`, `check_run`, `replay`, test `test_replay_survives_damaged_logs`. Ran it on a log with the last 20 bytes cut: both lines printed. **PASS**
 
 **Day 4 score: 4/4 (running total 19/19)**
+
+## Day 5 (2026-10-19)
+
+**Q20. With the shipped `policy.json` and no approver, the model calls `demo__reverse(text="x")`. What is the verdict and does it run?**
+A: There is no exact entry, so the `demo__*` pattern applies and the verdict is `ask`. With no approver it is treated as deny, so it does not run, and the reason says `via pattern 'demo__*'`.
+Check: `policy.py` `Policy.lookup` and `decide`, `policy.json`, test `test_shipped_policy_routes_mcp_tools`. Ran `Policy.decide`: `tool 'demo__reverse' is ask (via pattern 'demo__*'); no approver configured, treated as deny`, approved False. **PASS**
+
+**Q21. The model calls `demo__shell_exec`. Does the MCP server ever receive the request?**
+A: No. `demo__shell_exec` has an exact `deny` entry, `_guarded_call` returns the denial message without calling the tool, so no `tools/call` is sent. Only `initialize` and `tools/list` appear in the client's sent requests, and no tool result contains `CANARY`.
+Check: `agent.py` `_guarded_call`, `mcp.py` `MCPClient.sent`, test `test_denied_mcp_call_never_reaches_the_server`, quiz_model `canary_free`. Ran it: sent methods `['initialize', 'tools/list']`. **PASS**
+
+**Q22. An MCP server exits in the middle of a `tools/call`. What does the model see, and does the agent crash?**
+A: The reader thread hits EOF, `request` raises `MCPError("MCP server 'demo' exited (code 3) during tools/call")`, and `ToolRegistry.call` turns it into `error: demo__crash failed: ...` as the tool message. The agent keeps running; later calls to that server also return errors instead of hanging.
+Check: `mcp.py` `MCPClient.request`, `tools.py` `ToolRegistry.call`, test `test_server_crash_and_timeout_become_tool_errors`. Ran it: `error: demo__crash failed: MCP server 'demo' exited (code 3) during tools/call`. **PASS**
+
+**Q23. Your shell has `GITHUB_TOKEN` set when the CLI starts an MCP server. Does the server see it?**
+A: No. Servers get only `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT` (when set) plus the `env` block from `mcp_servers.json`.
+Check: `mcp.py` `PASS_ENV`, `minimal_env`, test `test_server_env_is_minimal`. Ran `minimal_env()` with `GITHUB_TOKEN=x`: keys `HOME, LANG, PATH, TMPDIR`, no token. **PASS**
+
+**Day 5 score: 4/4 (running total 23/23)**

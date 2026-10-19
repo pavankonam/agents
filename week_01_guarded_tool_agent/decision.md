@@ -139,3 +139,36 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** `replay(path, run_id_prefix)` (CLI: `python -m guarded_agent replay <log> [run_id]`) prints each run as a timeline (`[step] model asks / policy -> RAN|BLOCKED / result / answers`, then `end`), skips malformed lines with a count, and adds `WARNING:` lines from `check_run` when seq numbers have gaps, a run never finished, or a tool result has no verdict before it.
 **Why:** A replay that silently shows a damaged log would hide exactly the case an audit is for. A failed LLM call is logged as `run_error` (and still raised), so "never finished" really means the process died.
+
+## D26. MCP client written on the standard library, stdio only (2026-10-19)
+
+**Decision:** `mcp.py` implements the client side of MCP itself: start the server with `subprocess.Popen`, send newline delimited JSON-RPC 2.0 on stdin, read replies on a background thread, do `initialize` (protocol `2025-06-18`) plus `notifications/initialized`, then `tools/list` (following `nextCursor`, at most 50 pages) and `tools/call`. One request is in flight at a time, each with a timeout (default 30 s). Requests from the server (sampling, roots) are answered with "not supported".
+**Why:** Keeps the zero dependency rule (D4) and the whole client readable in one file. Stdio is how almost every local MCP server is launched, and the agent only needs tools, not resources or prompts.
+**Alternatives:** The official `mcp` Python SDK (async, many dependencies, changes often), HTTP transport (needs a running service, not needed for local servers).
+
+## D27. MCP tools are registered as `<server>__<tool>` (2026-10-19)
+
+**Decision:** Each wrapped tool is named server name plus `__` plus tool name, both cleaned to `[A-Za-z0-9_-]`, and its description starts with `[MCP server '<name>']`. The server's `inputSchema` is passed to the model unchanged (anything that is not an object schema becomes an empty object schema).
+**Why:** Two servers can both have a `read_file`, and a server must never be able to shadow a built in tool (the registry also rejects duplicates). A visible prefix lets the policy, the audit log and the human approver see where a tool comes from.
+**Alternatives:** Raw names (collisions and shadowing), a dot separator (not allowed in tool names by some models).
+
+## D28. MCP tools take the exact same guarded path (2026-10-19)
+
+**Decision:** Wrapped MCP tools are plain `Tool` objects in the `ToolRegistry`, so every call goes through `Agent._guarded_call`: argument rules, verdict, approver, `tool_decision` in the audit log before the call is sent. Unlisted MCP tools get the policy default (`deny`). A denied call is never sent to the server.
+**Why:** The project's whole point is one choke point. A second code path for "external" tools would be the first place a bypass appears. Tested by checking the client's sent requests: a denied `demo__shell_exec` never appears in them.
+
+## D29. Glob patterns for tool names in policy.json (2026-10-19)
+
+**Decision:** Keys in `tools` may contain `*`, `?` or `[...]`. Lookup order: exact name, then the matching pattern with the most literal characters, then `default`. The decision reason says which pattern matched (`via pattern 'demo__*'`). Shipped policy: `demo__*` is `ask`, `demo__word_count` is `allow` with a `max_length` rule, `demo__shell_exec` is `deny`.
+**Why:** An MCP server can expose dozens of tools that change between versions. A per server pattern like `server__*: ask` keeps new tools behind a human by default, while exact entries still pin down the risky or the trusted ones. Specificity, not file order, decides, so reordering the JSON cannot change a verdict.
+**Alternatives:** Per server sections in the policy (a second format to learn), regex keys (harder to read, easy to over match), first match wins (order dependent).
+
+## D30. A stdlib demo MCP server with a canary tool (2026-10-19)
+
+**Decision:** `demo_mcp_server.py` is a tiny MCP server (word_count, reverse, shell_exec, crash, fail) used by tests, `quiz_model.py` and the README. `shell_exec` runs nothing; it only returns `CANARY: ...`. The quiz fails any scenario whose tool results contain `CANARY`. `DEMO_MCP_PAGE_SIZE` and `DEMO_MCP_SLOW` exercise pagination and timeouts.
+**Why:** Tests and the daily run need a real subprocess speaking real MCP without Node or network. A canary turns "the deny rule held" into something checkable against the real model too, without ever giving the model a real shell.
+
+## D31. Treat MCP servers as untrusted (2026-10-19)
+
+**Decision:** Servers start with a minimal environment (`PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT` plus the config's own `env`), stderr is discarded, results are flattened to text (non text content is described, not inlined) and capped at 20000 chars, and a timeout, crash or JSON-RPC error becomes `MCPError`, which the registry turns into an `error: ...` tool message. `connect()` closes already started servers if a later one fails, and the CLI closes all servers when the run ends.
+**Why:** A third party server should not inherit tokens like `GITHUB_TOKEN` from the shell, should not flood a small model's context, and should not be able to crash or hang the agent. Same "errors go back to the model" rule as D8 and D19.

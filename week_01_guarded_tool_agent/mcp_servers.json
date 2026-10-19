@@ -1,0 +1,6 @@
+{
+  "servers": {
+    "demo": {"command": "python3", "args": ["src/guarded_agent/demo_mcp_server.py"],
+             "cwd": ".", "timeout": 30}
+  }
+}
