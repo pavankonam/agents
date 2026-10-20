@@ -172,3 +172,30 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** Servers start with a minimal environment (`PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT` plus the config's own `env`), stderr is discarded, results are flattened to text (non text content is described, not inlined) and capped at 20000 chars, and a timeout, crash or JSON-RPC error becomes `MCPError`, which the registry turns into an `error: ...` tool message. `connect()` closes already started servers if a later one fails, and the CLI closes all servers when the run ends.
 **Why:** A third party server should not inherit tokens like `GITHUB_TOKEN` from the shell, should not flood a small model's context, and should not be able to crash or hang the agent. Same "errors go back to the model" rule as D8 and D19.
+
+## D32. A real CLI with subcommands, built on argparse (2026-10-20)
+
+**Decision:** `cli.py` holds the CLI; `__main__.py` only calls `cli.main`. Commands: `run` (default, so `python -m guarded_agent "task"` still works), `tools`, `doctor`, `replay`. Every option (`--policy`, `--workspace`, `--mcp`, `--model`, `--host`, `--audit-dir`) falls back to the day 1 to 5 environment variables. `main()` takes `out`, `llm_factory` and `approver` so tests drive it with `FakeClient` and no terminal.
+**Why:** Environment variables alone were hard to discover and impossible to see in `--help`. argparse is stdlib (D4). Keeping the bare task form means no README command from earlier days breaks.
+**Alternatives:** click or typer (dependencies), separate scripts per command (more entry points to keep in sync).
+
+## D33. Stable exit codes and a machine readable mode (2026-10-20)
+
+**Decision:** 0 answered, 2 usage or config error (missing or broken policy, bad MCP config, `--max-steps 0`), 3 step limit reached, 4 Ollama unreachable or model missing. `--json` prints exactly one JSON object (answer, stopped_reason, steps, every decision, run_id, audit_log path) and nothing else. Config errors are printed as one `error:` line instead of a traceback.
+**Why:** The agent will be called from scripts and cron jobs, which need to tell "the model gave up" from "Ollama is down" without parsing text. The JSON includes every decision so a caller can see what was blocked without opening the audit log.
+
+## D34. `--non-interactive` declines every `ask` (2026-10-20)
+
+**Decision:** With `--non-interactive` the approver is a function that always returns False, so `ask` behaves like `deny` and nothing ever waits on stdin. There is deliberately no `--yes` or auto approve flag.
+**Why:** In scripts a prompt either hangs or reads EOF. Failing closed matches D11. An auto approve flag would turn every `ask` in `policy.json` into `allow` with one keystroke; anyone who wants that should edit the policy, where the change is visible and versioned.
+**Alternatives:** Auto detect a non TTY stdin (surprising in pipes, and `console_approver` already treats EOF as no), `--yes` (rejected above).
+
+## D35. Preflight Ollama with /api/tags before real runs (2026-10-20)
+
+**Decision:** `check_ollama(model, host)` calls `GET /api/tags` (5 s timeout) and reports either "up and pulled", "not reachable, run ollama serve", or "model not pulled, run ollama pull X" with the local model list. A name without a tag means `:latest`, so `qwen3` does not match `qwen3:4b`. Used by `doctor` and by `quiz_model.py` before any real scenario (exit 4); `fetch` is injectable for tests.
+**Why:** Before today a missing model or a stopped server showed up as a long traceback on the first scenario. `/api/tags` never loads a model, so the check is instant. Matching tags exactly avoids "it said OK but then Ollama tried to pull a different size".
+
+## D36. quiz_model.py reports per scenario results (2026-10-20)
+
+**Decision:** `--only TEXT` runs the scenarios whose question contains TEXT, and `--json PATH` writes model, score and per scenario pass, tools used, expected tool, seconds and the first 300 chars of the answer.
+**Why:** Against a real 4B model the interesting part is which scenario failed and how slow it was, and the report makes runs of different models (qwen3:4b vs llama3.2) comparable for the day 7 results table. `--only` makes it quick to retry one flaky scenario.

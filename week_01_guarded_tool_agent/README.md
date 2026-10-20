@@ -2,7 +2,37 @@
 
 A small tool calling agent that runs on a **free local model through Ollama**, where every tool call passes through a permission policy and is written to an audit log. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 5 of 7. Core agent loop, calculator and time tools, permission policy with argument rules, glob patterns and human approval, sandboxed file tools, JSONL audit log with replay, MCP client for stdio servers, tests.
+**Status:** Day 6 of 7. Core agent loop, calculator and time tools, permission policy with argument rules, glob patterns and human approval, sandboxed file tools, JSONL audit log with replay, MCP client for stdio servers, a full CLI (`run`, `tools`, `doctor`, `replay`), tests.
+
+## CLI demo
+
+```bash
+cd week_01_guarded_tool_agent
+export PYTHONPATH=src
+
+python3 -m guarded_agent doctor                    # is Ollama up, is qwen3:4b pulled?
+python3 -m guarded_agent tools --mcp mcp_servers.json
+python3 -m guarded_agent "What is 17 * 23?"        # same as: run "What is 17 * 23?"
+python3 -m guarded_agent run --model llama3.2 --max-steps 4 "Read notes.txt and give me the codename"
+python3 -m guarded_agent run --non-interactive --json "Save hello to hello.txt"
+python3 -m guarded_agent replay audit_logs/2026-10-20.jsonl
+```
+
+`tools` shows what the model could call and what the policy will do about it:
+
+```
+TOOL              VERDICT  SOURCE      MATCHED BY
+calculator        allow    builtin     exact, 1 rule(s): expression max_length
+read_file         allow    files       exact, 1 rule(s): path path_within
+write_file        ask      files       exact, 2 rule(s): path path_within, content max_length
+demo__word_count  allow    mcp:demo    exact, 1 rule(s): text max_length
+demo__reverse     ask      mcp:demo    pattern 'demo__*'
+demo__shell_exec  deny     mcp:demo    exact
+```
+
+`run` options: `--model`, `--host`, `--policy`, `--workspace`, `--mcp`, `--max-steps` (default 6), `--audit-dir`, `--no-audit`, `--non-interactive` (every `ask` is declined, nothing waits for input; there is no auto approve flag on purpose), `--json` (one JSON object with the answer, every decision, run id and log path). The older environment variables still work as defaults.
+
+Exit codes: `0` answered, `2` usage or config error, `3` step limit reached, `4` Ollama not reachable or model not pulled (the message says which command fixes it).
 
 ## Permission policy
 
@@ -92,9 +122,10 @@ pip install -r requirements.txt   # only pytest, the agent itself has no depende
 # 3. Ask something
 PYTHONPATH=src python3 -m guarded_agent "What is 17 * 23?"
 
-# 4. Quiz the agent against the real model
-python3 quiz/quiz_model.py            # uses qwen3:4b
-python3 quiz/quiz_model.py --model llama3.2
+# 4. Quiz the agent against the real model (checks Ollama first, exit 4 if it is down)
+python3 quiz/quiz_model.py                               # uses qwen3:4b
+python3 quiz/quiz_model.py --model llama3.2 --json llama.json   # per scenario report
+python3 quiz/quiz_model.py --only workspace              # just the matching scenarios
 
 # 5. Tests (no model needed)
 python3 -m pytest -q
@@ -106,7 +137,7 @@ Use another model with `GUARDED_AGENT_MODEL=llama3.2`.
 
 ```
 src/guarded_agent/
-  llm.py      OllamaClient (stdlib HTTP) and FakeClient
+  llm.py      OllamaClient (stdlib HTTP), FakeClient, check_ollama preflight
   tools.py    Tool, ToolRegistry, safe calculator, current_time
   policy.py   Policy (allow / ask / deny), argument rules, approver
   files.py    read_file / list_dir / write_file confined to a Workspace
@@ -114,6 +145,7 @@ src/guarded_agent/
   mcp.py      stdio MCP client: handshake, tools/list, tools/call, server__tool wrappers
   demo_mcp_server.py  stdlib MCP server for tests and demos (with a canary tool)
   agent.py    the agent loop: every tool call goes through the policy
+  cli.py      run / tools / doctor / replay, flags, exit codes, --json
 policy.json   the default policy used by the CLI and quiz_model.py
 mcp_servers.json  MCP servers to start (demo server shipped)
 workspace/    the folder file tools may touch (sample notes.txt)

@@ -1,10 +1,14 @@
 # Flow: Guarded Tool Agent
 
-Status: **Day 5**. Solid boxes exist today, dashed boxes are planned (day in brackets).
+Status: **Day 6**. Solid boxes exist today, dashed boxes are planned (day in brackets).
 
 ```mermaid
 flowchart TD
-    U[User task] --> A[Agent.run]
+    CLI[[python -m guarded_agent<br/>run / tools / doctor / replay<br/>cli.py]] -->|run: task + flags| U[User task]
+    CLI -->|doctor| DOC{{check_ollama<br/>GET /api/tags}}
+    DOC -->|exit 4 + fix hint| CLI
+    CLI -->|tools| TL[table: tool, verdict,<br/>source, matched by]
+    U --> A[Agent.run]
     A --> M[LLM client.chat<br/>OllamaClient or FakeClient]
     M -->|final text, no tool calls| R[Return answer + decisions]
     M -->|tool_calls| G[Agent._guarded_call]
@@ -24,7 +28,8 @@ flowchart TD
     T -->|tool result message| A
     E -->|tool error message| A
     UK -->|tool error message| A
-    A -->|steps > max_steps| S[Stop: step limit reached]
+    A -->|steps > max_steps| S[Stop: step limit reached<br/>CLI exit 3]
+    R -->|text or --json| CLI
 
     subgraph Tools
       C[calculator]
@@ -61,5 +66,7 @@ flowchart TD
 8. With an `AuditLog`, every step is appended to a JSONL file: `run_start` (task, model, tools, policy default), `model_reply` per step, `tool_decision` for each call (written before the tool runs), `tool_result`, and `run_end` or `run_error`. Events share a `run_id` and carry a `seq`. Strings over 2000 chars are clipped in the log only. `python -m guarded_agent replay <log> [run_id]` prints the timeline and warns about gaps, unfinished runs or results without a verdict.
 
 9. MCP servers listed in `mcp_servers.json` (CLI: `GUARDED_AGENT_MCP=mcp_servers.json`) are started as subprocesses by `connect()`. The client does the `initialize` handshake, pages through `tools/list` and wraps each tool as `<server>__<tool>`. Those wrappers sit in the same `ToolRegistry`, so they pass through `_guarded_call` like any other tool: a denied call is never sent to the server. Policy keys can be glob patterns (`demo__*`); an exact name wins over a pattern, and the most specific pattern wins over a broader one. Servers get a minimal environment, their output is capped, and a crash or timeout comes back to the model as an `error:` tool message.
+
+10. The CLI (`cli.py`) wires it all together. `run` (the default command) loads the policy, workspace, optional MCP servers and audit log from flags or the older environment variables, uses `console_approver` (or a decline everything approver with `--non-interactive`), and prints either readable lines or one JSON object. `tools` prints every tool with its verdict, where it came from (builtin, files, `mcp:<server>`) and which policy key matched. `doctor` checks Ollama with `GET /api/tags`. Exit codes: 0 answered, 2 usage or config error, 3 step limit, 4 Ollama down or model missing.
 
 `Policy.from_file("policy.json")` loads the policy. Unlisted tools use `default` (shipped as `deny`), and relative `path_within` roots resolve against the policy file's folder.

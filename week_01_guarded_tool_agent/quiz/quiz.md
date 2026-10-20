@@ -113,3 +113,23 @@ A: No. Servers get only `PATH`, `HOME`, `LANG`, `LC_ALL`, `TMPDIR`, `SYSTEMROOT`
 Check: `mcp.py` `PASS_ENV`, `minimal_env`, test `test_server_env_is_minimal`. Ran `minimal_env()` with `GITHUB_TOKEN=x`: keys `HOME, LANG, PATH, TMPDIR`, no token. **PASS**
 
 **Day 5 score: 4/4 (running total 23/23)**
+
+## Day 6 (2026-10-20)
+
+**Q24. You run `python -m guarded_agent --model llama3.2 "what is 2+2"`. Which command runs?**
+A: `run`. `normalise` prepends `run` whenever the first argument is not one of `run`, `tools`, `doctor`, `replay`, `-h`, `--help`, so options before the task still work and the day 1 to 5 form is unchanged.
+Check: `cli.py` `normalise`, `COMMANDS`, test `test_bare_task_means_run`. Ran it: `['run', '--model', 'llama3.2', 'task']`. **PASS**
+
+**Q25. With `--non-interactive` the model calls `write_file`. Is the approver asked, and is the file written?**
+A: Neither. `cmd_run` swaps in `denying_approver`, which returns False, so the `ask` verdict is declined (`approved: false`, reason ends `; human declined`), no prompt appears, and the workspace stays empty.
+Check: `cli.py` `cmd_run`, `denying_approver`, `policy.py` `decide`, test `test_non_interactive_declines_ask_without_prompting` (a spy approver passed by the test is never called). **PASS**
+
+**Q26. What exit code does the CLI return when the agent hits the step limit, and how many times was the model called with `--max-steps 2`?**
+A: Exit 3 (`EXIT_MAX_STEPS`), the answer text says `step limit reached (2 steps)`, and the model was called exactly 2 times. `--max-steps 0` is rejected with exit 2 before any model call.
+Check: `cli.py` `cmd_run`, `agent.py` `_run`, test `test_max_steps_flag_and_exit_code`. **PASS**
+
+**Q27. Only `qwen3:4b` is pulled and you run `doctor --model qwen3`. OK or problem?**
+A: Problem, exit 4. A name without a tag means `qwen3:latest`, which is not `qwen3:4b`; the message lists the local models and says `ollama pull qwen3`.
+Check: `llm.py` `_model_matches`, `check_ollama`, decision D35, tests `test_model_name_matching`, `test_check_ollama_states`. Ran it: `(False, "Model 'qwen3' is not pulled (local models: qwen3:4b). Run `ollama pull qwen3`.")`. **PASS**
+
+**Day 6 score: 4/4 (running total 27/27)**

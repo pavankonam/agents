@@ -62,6 +62,40 @@ class OllamaClient:
         return parse_ollama_message(data.get("message", {}))
 
 
+def _model_matches(wanted: str, have: str) -> bool:
+    """'qwen3' matches 'qwen3:latest'; 'qwen3:4b' must match exactly."""
+    if ":" not in wanted:
+        wanted += ":latest"
+    if ":" not in have:
+        have += ":latest"
+    return wanted == have
+
+
+def check_ollama(model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST,
+                 timeout: float = 5.0, fetch=None) -> tuple[bool, str]:
+    """Preflight: is Ollama reachable and is the model pulled? Returns (ok, message).
+
+    Uses GET /api/tags, which lists local models and never loads one, so it is
+    fast. `fetch(url, timeout) -> dict` is injectable for tests.
+    """
+    host = host.rstrip("/")
+    if fetch is None:
+        def fetch(url, timeout):
+            with urllib.request.urlopen(url, timeout=timeout) as resp:
+                return json.loads(resp.read())
+    try:
+        data = fetch(f"{host}/api/tags", timeout)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        return False, (f"Ollama is not reachable at {host} ({exc}). "
+                       "Start it with `ollama serve` or open the Ollama app.")
+    names = [m.get("name") or m.get("model", "") for m in data.get("models") or []]
+    if any(_model_matches(model, n) for n in names):
+        return True, f"Ollama at {host} is up and model '{model}' is pulled."
+    have = ", ".join(sorted(names)) or "none"
+    return False, (f"Model '{model}' is not pulled (local models: {have}). "
+                   f"Run `ollama pull {model}`.")
+
+
 def parse_ollama_message(message: dict) -> LLMResponse:
     calls = []
     for tc in message.get("tool_calls") or []:

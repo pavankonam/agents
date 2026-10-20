@@ -34,7 +34,7 @@ A developer who wants to run a local agent on their laptop and know exactly what
 * [x] **Day 3 (Sat 10/17):** File tools (`read_file`, `write_file`, `list_dir`) sandboxed to a workspace folder. Path rules enforced by the policy.
 * [x] **Day 4 (Sun 10/18):** JSONL audit log for every step and a `replay` command that prints a run as a readable timeline.
 * [x] **Day 5 (Mon 10/19):** MCP client: load tools from any stdio MCP server and route them through the policy. (Stdlib JSON-RPC client, `server__tool` names, glob patterns in `policy.json`, demo server with a denied canary tool.)
-* [ ] **Day 6 (Tue 10/20):** CLI (`python -m guarded_agent "task"`), README demo, `quiz_model.py` scenarios against real Ollama.
+* [x] **Day 6 (Tue 10/20):** CLI (`python -m guarded_agent "task"`), README demo, `quiz_model.py` scenarios against real Ollama. (argparse CLI with `run`, `tools`, `doctor`, `replay`; `--json`, `--non-interactive`, `--max-steps`, `--no-audit`; exit codes; Ollama preflight; quiz `--only` and `--json` report.)
 * [ ] **Day 7 (Wed 10/21):** Hardening and close out: prompt injection test (a file that tells the agent to delete things), results table, retro.
 
 ## 6. Success criteria
