@@ -2,6 +2,7 @@
 
 from .agent import Agent, AgentResult
 from .audit import AuditLog, load_events, replay
+from .guard import InjectionGuard, scan as scan_injection, unwrap
 from .files import SandboxError, Workspace, file_tools
 from .llm import FakeClient, LLMResponse, OllamaClient, ToolCall, check_ollama
 from .mcp import MCPClient, MCPError, connect as connect_mcp
@@ -15,5 +16,6 @@ __all__ = [
     "SandboxError", "Workspace", "file_tools",
     "AuditLog", "load_events", "replay",
     "MCPClient", "MCPError", "connect_mcp",
+    "InjectionGuard", "scan_injection", "unwrap",
 ]
-__version__ = "0.6.0"
+__version__ = "1.0.0"

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from guarded_agent import unwrap  # noqa: E402
 from guarded_agent import (
     Agent, AuditLog, FakeClient, LLMResponse, MCPClient, MCPError, Policy, ToolCall,
     ToolRegistry, connect_mcp, default_tools, load_events,
@@ -101,7 +102,8 @@ def test_denied_mcp_call_never_reaches_the_server(client, tmp_path):
     tool_msgs = [m["content"] for m in result.messages if m["role"] == "tool"]
     assert tool_msgs[0].startswith("error: denied by policy")
     assert "CANARY" not in "".join(tool_msgs)
-    assert tool_msgs[1] == "3"
+    assert tool_msgs[1].startswith("<<untrusted output of demo__word_count")  # D37
+    assert unwrap(tool_msgs[1]) == "3"
     called = [m["params"]["name"] for m in client.sent if m["method"] == "tools/call"]
     assert called == ["word_count"]  # shell_exec was never sent to the server
     events, _ = load_events(log.path)

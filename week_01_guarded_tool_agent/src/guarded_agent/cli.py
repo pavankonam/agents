@@ -176,6 +176,7 @@ def cmd_run(args, out: TextIO, llm_factory: Callable | None, approver: Approver 
             "decisions": [{"tool": d.tool, "arguments": d.arguments, "verdict": d.verdict,
                            "approved": d.approved, "reason": d.reason}
                           for d in result.decisions],
+            "injection_warnings": result.warnings,
             "run_id": log.run_id if log else None,
             "audit_log": str(log.path) if log else None,
         }), file=out)
@@ -184,6 +185,9 @@ def cmd_run(args, out: TextIO, llm_factory: Callable | None, approver: Approver 
         status = "ran" if d.approved else "blocked"
         print(f"[tool] {d.tool}({json.dumps(d.arguments)})  verdict={d.verdict} "
               f"{status}: {d.reason}", file=out)
+    for w in result.warnings:
+        print(f"[guard] step {w['step']} {w['tool']}: possible prompt injection "
+              f"({', '.join(w['labels'])}); later calls needed approval", file=out)
     print(result.answer, file=out)
     if log:
         print(f"[audit] run {log.run_id} -> {log.path}  "

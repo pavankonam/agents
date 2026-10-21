@@ -1,6 +1,6 @@
 # Flow: Guarded Tool Agent
 
-Status: **Day 6**. Solid boxes exist today, dashed boxes are planned (day in brackets).
+Status: **Day 7, closed**. Every box exists in the code.
 
 ```mermaid
 flowchart TD
@@ -25,7 +25,12 @@ flowchart TD
     G -->|tool_decision written<br/>before the tool runs| L[(Audit log JSONL<br/>audit_logs/DATE.jsonl)]
     A -->|run_start / model_reply /<br/>tool_result / run_end / run_error| L
     L --> RP[replay: timeline + integrity WARNINGs]
-    T -->|tool result message| A
+    T -->|output| GU{{InjectionGuard.inspect<br/>untrusted: read_file, list_dir, server__tool}}
+    GU -->|trusted tool| A
+    GU -->|wrap in untrusted envelope| A
+    GU -->|scan finds injection phrasing| W[injection_warning<br/>run is tainted]
+    W --> L
+    W -.->|later non exempt allow<br/>escalated to ask| P
     E -->|tool error message| A
     UK -->|tool error message| A
     A -->|steps > max_steps| S[Stop: step limit reached<br/>CLI exit 3]
@@ -68,5 +73,7 @@ flowchart TD
 9. MCP servers listed in `mcp_servers.json` (CLI: `GUARDED_AGENT_MCP=mcp_servers.json`) are started as subprocesses by `connect()`. The client does the `initialize` handshake, pages through `tools/list` and wraps each tool as `<server>__<tool>`. Those wrappers sit in the same `ToolRegistry`, so they pass through `_guarded_call` like any other tool: a denied call is never sent to the server. Policy keys can be glob patterns (`demo__*`); an exact name wins over a pattern, and the most specific pattern wins over a broader one. Servers get a minimal environment, their output is capped, and a crash or timeout comes back to the model as an `error:` tool message.
 
 10. The CLI (`cli.py`) wires it all together. `run` (the default command) loads the policy, workspace, optional MCP servers and audit log from flags or the older environment variables, uses `console_approver` (or a decline everything approver with `--non-interactive`), and prints either readable lines or one JSON object. `tools` prints every tool with its verdict, where it came from (builtin, files, `mcp:<server>`) and which policy key matched. `doctor` checks Ollama with `GET /api/tags`. Exit codes: 0 answered, 2 usage or config error, 3 step limit, 4 Ollama down or model missing.
+
+11. Prompt injection guard (`guard.py`, day 7). After an approved call, output from untrusted tools (`read_file`, `list_dir`, every `server__tool`) is wrapped in `<<untrusted output of TOOL ...>>` / `<<end untrusted output>>`, and the system prompt says text inside is data. `scan` looks for injection phrasing (ignore instructions, role spoofing, tool directives, destructive or secrecy orders, exfiltration, fake envelope markers). A hit writes an `injection_warning` event, adds a `[guard: ...]` note inside the envelope and taints the run: from then on every call the policy would `allow` is escalated to `ask` (reason `escalated to ask: run tainted by ...`), except the pure `calculator` and `current_time`. `ask` and `deny` are never loosened. Without an approver the escalated call is blocked. `Agent(guard=None)` switches the guard off.
 
 `Policy.from_file("policy.json")` loads the policy. Unlisted tools use `default` (shipped as `deny`), and relative `path_within` roots resolve against the policy file's folder.

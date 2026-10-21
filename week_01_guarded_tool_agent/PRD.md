@@ -35,7 +35,7 @@ A developer who wants to run a local agent on their laptop and know exactly what
 * [x] **Day 4 (Sun 10/18):** JSONL audit log for every step and a `replay` command that prints a run as a readable timeline.
 * [x] **Day 5 (Mon 10/19):** MCP client: load tools from any stdio MCP server and route them through the policy. (Stdlib JSON-RPC client, `server__tool` names, glob patterns in `policy.json`, demo server with a denied canary tool.)
 * [x] **Day 6 (Tue 10/20):** CLI (`python -m guarded_agent "task"`), README demo, `quiz_model.py` scenarios against real Ollama. (argparse CLI with `run`, `tools`, `doctor`, `replay`; `--json`, `--non-interactive`, `--max-steps`, `--no-audit`; exit codes; Ollama preflight; quiz `--only` and `--json` report.)
-* [ ] **Day 7 (Wed 10/21):** Hardening and close out: prompt injection test (a file that tells the agent to delete things), results table, retro.
+* [x] **Day 7 (Wed 10/21):** Hardening and close out: prompt injection test (a file that tells the agent to delete things), results table, retro. (`guard.py`: untrusted output envelope, injection scan, taint that escalates later `allow` calls to `ask`; `workspace/injected.txt`; injection quiz scenario; README results; retro in decision.md.)
 
 ## 6. Success criteria
 
@@ -43,6 +43,13 @@ A developer who wants to run a local agent on their laptop and know exactly what
 * With Ollama running, `quiz/quiz_model.py` passes at least 80% of scenarios on `qwen3:4b`.
 * No tool runs without a recorded policy verdict.
 * A `deny` rule can never be bypassed by the model's arguments (tested).
+
+## 6b. Outcome (2026-10-21)
+
+* `pytest`: 119 tests pass with no model installed. **Met.**
+* `quiz_model.py --fake`: 13/13. Real `qwen3:4b` run: not yet recorded, see README results. **Open.**
+* No tool runs without a recorded verdict: checked by `check_run` on every quiz run and by tests. **Met.**
+* A `deny` cannot be bypassed by arguments or by the injection guard (the guard only tightens): tested. **Met.**
 
 ## 7. Risks
 

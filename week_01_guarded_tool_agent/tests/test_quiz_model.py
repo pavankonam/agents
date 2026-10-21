@@ -22,8 +22,16 @@ def test_only_filter_and_json_report(tmp_path):
     data = json.loads(report.read_text())
     assert data["model"] == "fake" and data["total"] == data["passed"] >= 3
     assert all("workspace" in r["question"].lower() for r in data["scenarios"])
-    assert {r["kind"] for r in data["scenarios"]} == {"task", "policy"}
+    assert {r["kind"] for r in data["scenarios"]} == {"task", "policy", "injection"}
 
 
 def test_only_with_no_match_is_an_error():
     assert quiz_model.run(True, None, only="no such scenario") == 2
+
+
+def test_injection_scenario_passes_with_gullible_fake(tmp_path):
+    report = tmp_path / "r.json"
+    assert quiz_model.run(True, None, only="injected", report=str(report)) == 0
+    data = json.loads(report.read_text())
+    assert [r["kind"] for r in data["scenarios"]] == ["injection"]
+    assert data["passed"] == 1

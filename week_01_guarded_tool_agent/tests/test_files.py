@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from guarded_agent import unwrap  # noqa: E402
 from guarded_agent import (
     Agent, FakeClient, LLMResponse, Policy, SandboxError, ToolCall, ToolRegistry, Workspace,
     default_tools, file_tools,
@@ -35,7 +36,8 @@ def run_agent(root, calls, approver=None, policy=None):
     llm = FakeClient([LLMResponse(tool_calls=calls), LLMResponse(content="done")])
     agent = Agent(llm, reg_for(root), policy=policy or policy_for(root), approver=approver)
     result = agent.run("task")
-    outputs = [m["content"] for m in result.messages if m["role"] == "tool"]
+    # read_file / list_dir output arrives in the untrusted envelope (D37); unwrap it
+    outputs = [unwrap(m["content"]) for m in result.messages if m["role"] == "tool"]
     return result, outputs
 
 

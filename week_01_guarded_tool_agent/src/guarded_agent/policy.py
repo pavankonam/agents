@@ -157,9 +157,17 @@ class Policy:
         return PolicyDecision(tool, arguments, tp.verdict, f"tool '{tool}' is {tp.verdict}{via}")
 
     def decide(self, tool: str, arguments: dict[str, Any],
-               approver: Approver | None = None) -> PolicyDecision:
-        """check() plus the approval step. Sets decision.approved."""
+               approver: Approver | None = None,
+               escalate: str | None = None) -> PolicyDecision:
+        """check() plus the approval step. Sets decision.approved.
+
+        `escalate` (a reason) turns an `allow` into `ask`; it never loosens
+        `ask` or `deny`. The agent uses it when a run is tainted by a possible
+        prompt injection (decision D39)."""
         d = self.check(tool, arguments)
+        if escalate and d.verdict == "allow":
+            d.verdict = "ask"
+            d.reason += f"; escalated to ask: {escalate}"
         if d.verdict == "allow":
             d.approved = True
         elif d.verdict == "ask":

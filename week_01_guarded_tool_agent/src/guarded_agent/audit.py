@@ -4,7 +4,8 @@ One JSON object per line. Every event has:
   ts      UTC timestamp, ISO 8601 with milliseconds
   run_id  12 hex chars, the same for every event of one Agent.run
   seq     0, 1, 2 ... within the run (gaps or repeats mean a damaged log)
-  type    run_start | model_reply | tool_decision | tool_result | run_end | run_error
+  type    run_start | model_reply | tool_decision | tool_result | injection_warning |
+          run_end | run_error
 
 The tool_decision event is written BEFORE the tool runs, so a verdict is on disk
 even if the tool or the process dies halfway (success criterion: no tool runs
@@ -20,7 +21,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 MAX_FIELD_CHARS = 2000  # long strings (file contents, tool output) are clipped in the log
-EVENT_TYPES = ("run_start", "model_reply", "tool_decision", "tool_result", "run_end", "run_error")
+EVENT_TYPES = ("run_start", "model_reply", "tool_decision", "tool_result", "injection_warning",
+               "run_end", "run_error")
 
 
 def clip(value: Any, limit: int = MAX_FIELD_CHARS) -> Any:
@@ -124,9 +126,14 @@ def format_event(ev: dict) -> str:
                 f"  ({ev.get('reason', '')})")
     if t == "tool_result":
         return f"{tag} result {ev.get('tool')}: {_short(ev.get('output', ''))}"
+    if t == "injection_warning":
+        return (f"{tag} GUARD {ev.get('tool')}: possible prompt injection "
+                f"({', '.join(ev.get('labels') or [])}); later calls need approval")
     if t == "run_end":
+        warn = ev.get("injection_warnings", 0)
         return (f"  end: {ev.get('stopped_reason')} after {ev.get('steps')} step(s), "
-                f"{ev.get('tool_calls', 0)} tool call(s), {ev.get('blocked', 0)} blocked")
+                f"{ev.get('tool_calls', 0)} tool call(s), {ev.get('blocked', 0)} blocked"
+                + (f", {warn} injection warning(s)" if warn else ""))
     if t == "run_error":
         return f"  ERROR: {ev.get('error')}"
     return f"  ? unknown event {t}"
