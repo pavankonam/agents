@@ -20,7 +20,8 @@ def main(argv: list[str]) -> int:
     except ConnectionError as exc:
         print(exc, file=sys.stderr)
         return 4
-    print(f"[skills loaded: {', '.join(result.loaded_skills) or 'none'}]")
+    print(f"[skills loaded: {', '.join(result.loaded_skills) or 'none'}]"
+          + (f" [files read: {', '.join(result.read_files)}]" if result.read_files else ""))
     print(result.answer)
     return 0 if result.stopped_reason == "final_answer" else 3
 

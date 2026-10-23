@@ -69,3 +69,32 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** Each `quiz_model.py` scenario expects text that only the skill body contains (for example "Blue Heron Expansion"), and fails if extra skills were loaded.
 **Why:** A model that calls `load_skill` and then ignores the result would pass a tool only check. Extra loads waste context, which is the thing this project measures.
+
+## D14. `read_skill_file` only works for skills that are already loaded (2026-10-23)
+
+**Decision:** Level 3 reads are refused with `error: skill ... is not loaded. Call load_skill first` until the model has called `load_skill` for that skill.
+**Why:** Progressive disclosure is an order, not just three functions. The body is what tells the model which file matters and why; reading files blind would skip that and waste context on the wrong file. It also keeps `loaded_skills` an honest record of what the model used.
+**Alternatives:** Let any file be read at any time (simpler, but a small model could bypass the body entirely); load the body automatically on first file read (hides a step the quiz wants to measure).
+
+## D15. Path confinement: reject first, then resolve and compare (2026-10-23)
+
+**Decision:** `resolve_resource` rejects empty, absolute (`/x`, `C:/x`), any `..` part, hidden parts (`.env`, `.git/...`) and `SKILL.md` itself before touching the disk. Backslashes count as separators. Then it resolves the path with symlinks followed and requires the real file to sit under the real skill folder and be a regular file. A symlink that stays inside the folder is allowed.
+**Why:** Two layers. The string checks give the model a clear reason for the common mistakes. The resolve check is the real guarantee: it also catches a symlink planted inside the skill that points to `~/.ssh` or a sibling skill. `SKILL.md` is refused so the body only ever arrives through `load_skill`, which is what tracks loads.
+**Alternatives:** Only the resolve check (safe, but errors are less helpful); a chroot or sandbox (overkill for reading text, revisit for scripts on day 3).
+
+## D16. Size cap with truncation, and text only (2026-10-23)
+
+**Decision:** At most 16,000 bytes per read (about 4k tokens). Larger files are cut at the cap (never inside a UTF-8 character) and the tool message ends with `[truncated: ...]`. Files with a NUL byte or invalid UTF-8 are refused.
+**Why:** A 4B model with an 8k to 32k window cannot afford one huge reference file. Truncating with a visible note is more useful than a flat refusal: the model still gets the top of the file, which is usually the table of contents or the rule it needs. Binary content is noise for a text model.
+**Alternatives:** Refuse big files (unhelpful), page through with an offset argument (more tool calls for a small model to get right; may come back if day 4 budgets need it).
+
+## D17. Offer `read_skill_file` only when a skill bundles files, and list files on load (2026-10-23)
+
+**Decision:** `Agent.tools()` adds `read_skill_file` only if at least one skill has files besides `SKILL.md`, and its `skill` enum contains only those skills. `load_skill` appends a `<skill_files>` list (names only, at most 50, hidden files and symlinks out) after the body.
+**Why:** Every tool schema costs context on every turn and is one more thing a small model can call wrongly. Listing names on load tells the model what exists without paying for the contents, which is exactly level 3 of progressive disclosure. Errors from `read_skill_file` repeat the list so the model can correct a wrong path.
+**Alternatives:** Always offer the tool (simpler schema, wasted tokens); put file lists in the catalog (leaks level 3 into level 1).
+
+## D18. Level 3 quiz scenario whose answer is only in the reference file (2026-10-23)
+
+**Decision:** New `incident-severity` skill. Its body only says "read `references/severity-matrix.md`"; the colour codes (Code Crimson and so on) exist only in that file. The quiz scenario expects "Crimson" and requires exactly that file to be read. A test asserts the expected text is neither in the catalog nor in the body.
+**Why:** Same idea as D13 one level deeper: the answer can only be right if the model actually followed the pointer and read the file.

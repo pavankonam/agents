@@ -22,12 +22,26 @@ def test_preflight_failure_returns_4():
 
 
 def test_every_expected_skill_exists_and_answer_is_only_in_body():
-    from skills_agent import SkillLibrary
+    from skills_agent import SkillLibrary, list_resources
     lib = SkillLibrary.discover(quiz.SKILLS_DIR)
     catalog = lib.catalog().lower()
-    for question, skills, expected in quiz.SCENARIOS:
+    for question, skills, files, expected in quiz.SCENARIOS:
         for s in skills:
             assert lib.get(s) is not None
+        for f in files:
+            skill, _, path = f.partition("/")
+            assert skill in skills and path in list_resources(lib.get(skill))
         if skills and expected not in ("fix",) and not expected[0].isdigit():
             # glossary answers must not leak into level 1, or the check proves nothing
             assert expected.lower() not in catalog
+
+
+def test_level3_answer_is_only_in_the_file():
+    """The incident scenario must need the reference file, not just the body."""
+    from skills_agent import SkillLibrary
+    lib = SkillLibrary.discover(quiz.SKILLS_DIR)
+    for question, skills, files, expected in quiz.SCENARIOS:
+        if files:
+            bodies = " ".join(lib.get(s).body for s in skills).lower()
+            assert expected.lower() not in bodies
+            assert expected.lower() not in lib.catalog().lower()

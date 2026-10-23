@@ -5,8 +5,9 @@
     python3 -B quiz/quiz_model.py --model llama3.2 --only BHX
 
 A scenario passes when the agent loaded exactly the expected skills (no extra
-ones) and the answer contains the expected text, which only the skill body
-knows. That second check proves the body was used, not just fetched.
+ones), read exactly the expected skill files (level 3), and the answer contains
+the expected text, which only the skill body or the referenced file knows. That
+last check proves the content was used, not just fetched.
 """
 
 from __future__ import annotations
@@ -20,27 +21,37 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from skills_agent import (  # noqa: E402
-    LOAD_SKILL, Agent, FakeClient, LLMResponse, OllamaClient, SkillLibrary, ToolCall, check_ollama,
+    LOAD_SKILL, READ_SKILL_FILE, Agent, FakeClient, LLMResponse, OllamaClient, SkillLibrary,
+    ToolCall, check_ollama,
 )
 from skills_agent.llm import DEFAULT_MODEL  # noqa: E402
 
 SKILLS_DIR = ROOT / "skills"
 
-# (question, skills that must be loaded, text the answer must contain)
+# (question, skills that must be loaded, files that must be read as "skill/path",
+#  text the answer must contain)
 SCENARIOS = [
-    ("What does BHX stand for on our team?", ["team-glossary"], "Blue Heron Expansion"),
-    ("Someone mentioned ORCA in a meeting. What is it?", ["team-glossary"], "Change Approval"),
-    ("Convert 26.2 miles to km.", ["unit-converter"], "42.16"),
-    ("Convert 212 Fahrenheit to Celsius.", ["unit-converter"], "100.00"),
+    ("What does BHX stand for on our team?", ["team-glossary"], [], "Blue Heron Expansion"),
+    ("Someone mentioned ORCA in a meeting. What is it?", ["team-glossary"], [],
+     "Change Approval"),
+    ("Convert 26.2 miles to km.", ["unit-converter"], [], "42.16"),
+    ("Convert 212 Fahrenheit to Celsius.", ["unit-converter"], [], "100.00"),
     ("Write a commit message for: fixed a crash when the config file is empty.",
-     ["commit-message"], "fix"),
-    ("Reply with exactly the word: ready", [], "ready"),
+     ["commit-message"], [], "fix"),
+    ("Checkout has been down for 40% of users for ten minutes. How severe is this incident "
+     "and what colour code do we use?", ["incident-severity"],
+     ["incident-severity/references/severity-matrix.md"], "Crimson"),
+    ("Reply with exactly the word: ready", [], [], "ready"),
 ]
 
 
-def fake_script(skills: list[str], expected: str) -> list[LLMResponse]:
+def fake_script(skills: list[str], files: list[str], expected: str) -> list[LLMResponse]:
     """A scripted 'perfect' model, used to check the harness and the agent loop."""
     turns = [LLMResponse(tool_calls=[ToolCall(LOAD_SKILL, {"name": s})]) for s in skills]
+    for f in files:
+        skill, _, path = f.partition("/")
+        turns.append(LLMResponse(tool_calls=[ToolCall(READ_SKILL_FILE,
+                                                      {"skill": skill, "path": path})]))
     return turns + [LLMResponse(content=f"Answer: {expected}")]
 
 
@@ -56,19 +67,21 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         print(f"No scenario matches --only {only!r}")
         return 2
     passed = 0
-    for question, skills, expected in scenarios:
-        llm = (FakeClient(fake_script(skills, expected)) if fake
+    for question, skills, files, expected in scenarios:
+        llm = (FakeClient(fake_script(skills, files, expected)) if fake
                else OllamaClient(**({"model": model} if model else {})))
         t0 = time.perf_counter()
         result = Agent(llm, lib).run(question)
         secs = time.perf_counter() - t0
         skills_ok = sorted(result.loaded_skills) == sorted(skills)
+        files_ok = sorted(result.read_files) == sorted(files)
         answer_ok = expected.lower() in result.answer.lower()
-        ok = skills_ok and answer_ok and result.stopped_reason == "final_answer"
+        ok = skills_ok and files_ok and answer_ok and result.stopped_reason == "final_answer"
         passed += ok
         print(f"[{'PASS' if ok else 'FAIL'}] {question} ({secs:.1f}s)")
         if not ok:
             print(f"    loaded {result.loaded_skills} (expected {skills})")
+            print(f"    read files {result.read_files} (expected {files})")
             print(f"    answer: {result.answer[:200]!r} (expected to contain {expected!r})")
     print(f"\n{passed}/{len(scenarios)} passed "
           f"({'fake model' if fake else model or DEFAULT_MODEL})")

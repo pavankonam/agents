@@ -25,3 +25,23 @@ Answer: Folded: the lines are joined with single spaces. `|` would keep the newl
 Verified: `parse_frontmatter` joins with `" "` when `rest[0] == ">"`; `test_parse_folded_literal_quoted_and_nested`. **PASS**
 
 Day 1 result: 5/5 PASS.
+
+## Day 2 (2026-10-23)
+
+**Q6. The model calls `read_skill_file("incident-severity", "references/severity-matrix.md")` before it ever called `load_skill`. What does it get back?**
+Answer: An error saying the skill is not loaded and that it must call `load_skill` first. No file content is returned and `read_files` stays empty.
+Verified: `Agent._read` checks `if skill.name not in loaded` before touching the file; `test_read_before_load_is_refused` asserts the message, that "Code Crimson" is absent and `read_files == []`. **PASS**
+
+**Q7. A skill folder contains `references/escape.md`, a symlink to a file outside the skill. Can the model read it?**
+Answer: No. The string checks pass (no `..`, relative), but `resolve_resource` follows the symlink and the real path is not under the real skill folder, so it raises `path ... resolves outside the skill folder`. The file is also left out of the `<skill_files>` list. A symlink whose target stays inside the folder is allowed.
+Verified: `resolve_resource` (`root not in real.parents`), `list_resources` skips `p.is_symlink()`; tests `test_symlink_escape_is_refused`, `test_symlink_inside_the_folder_is_allowed`, `test_list_resources_skips_skill_md_hidden_and_symlinks`. **PASS**
+
+**Q8. A reference file is 20,000 bytes. What reaches the model?**
+Answer: The first 16,000 bytes (`RESOURCE_MAX_BYTES`), never cut inside a UTF-8 character, followed by a `[truncated: file is larger than the read limit]` line, inside `<skill_file skill=... path=...>`.
+Verified: `read_resource` reads `max_bytes + 1` and slices; `Agent._read` appends the note. Checked by hand today with a 20,000 byte file: exactly 16,000 bytes of content and the note came back. Tests `test_size_cap_truncates`, `test_truncation_inside_multibyte_char_is_trimmed`, `test_truncation_note_reaches_the_model`. **PASS**
+
+**Q9. With only `team-glossary`, `commit-message` and `unit-converter` installed, which tools does the model see?**
+Answer: Only `load_skill`. `read_skill_file` is offered only when at least one skill bundles files besides `SKILL.md`, and its `skill` enum lists only those skills. With the shipped `skills/` folder today that is `["incident-severity"]`.
+Verified: `Agent.tools()` and `_skills_with_files()`; `test_no_read_tool_when_no_skill_has_files`, `test_tool_schema_enumerates_skill_names`. **PASS**
+
+Day 2 result: 4/4 PASS. Day 1 questions rechecked against today's code: Q1 to Q5 still PASS (Q1 now also covers `test_system_prompt_mentions_read_tool_and_no_file_content`).

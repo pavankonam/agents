@@ -1,6 +1,8 @@
 from pathlib import Path
 
-from skills_agent import LOAD_SKILL, Agent, FakeClient, LLMResponse, SkillLibrary, ToolCall
+from skills_agent import (
+    LOAD_SKILL, READ_SKILL_FILE, Agent, FakeClient, LLMResponse, SkillLibrary, ToolCall,
+)
 
 SKILLS = Path(__file__).resolve().parents[1] / "skills"
 
@@ -23,10 +25,14 @@ def test_system_prompt_has_catalog_only():
 
 def test_tool_schema_enumerates_skill_names():
     tools = Agent(FakeClient([]), lib()).tools()
-    assert len(tools) == 1
+    assert len(tools) == 2
     fn = tools[0]["function"]
     assert fn["name"] == LOAD_SKILL
     assert fn["parameters"]["properties"]["name"]["enum"] == lib().names()
+    read = tools[1]["function"]
+    assert read["name"] == READ_SKILL_FILE
+    # only skills that bundle files are offered to read_skill_file (D17)
+    assert read["parameters"]["properties"]["skill"]["enum"] == ["incident-severity"]
 
 
 def test_no_skills_means_no_tools():
@@ -71,6 +77,7 @@ def test_missing_name_and_unknown_tool():
     contents = [m["content"] for m in fake.calls[1] if m["role"] == "tool"]
     assert contents[0] == "error: load_skill needs a 'name' argument"
     assert contents[1].startswith("error: unknown tool 'shell'")
+    assert "read_skill_file" in contents[1]
 
 
 def test_second_load_is_a_short_note():

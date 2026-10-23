@@ -6,9 +6,9 @@ followed by Markdown instructions. Progressive disclosure has three levels:
 
 1. catalog: only name + description of every skill sit in the system prompt
 2. body: the Markdown instructions, loaded when the model calls load_skill
-3. resources: extra files in the folder, read on demand (day 2)
+3. resources: extra files in the folder, read on demand with read_resource
 
-Only level 1 and 2 exist on day 1. See decision.md D7 to D12.
+See decision.md D7 to D12 (levels 1 and 2) and D14 to D17 (level 3).
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ DESCRIPTION_MAX = 1024
 COMPATIBILITY_MAX = 500
 KNOWN_FIELDS = {"name", "description", "license", "compatibility", "metadata", "allowed-tools"}
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+RESOURCE_MAX_BYTES = 16_000  # level 3 cap per read, about 4k tokens (D16)
+RESOURCE_LIST_MAX = 50
 
 
 class SkillError(ValueError):
@@ -168,6 +170,84 @@ def load_skill_dir(folder: Path) -> Skill:
         allowed_tools=tools.split() if isinstance(tools, str) else [],
         warnings=warnings,
     )
+
+
+def list_resources(skill: Skill, limit: int = RESOURCE_LIST_MAX) -> list[str]:
+    """Relative POSIX paths of the files bundled with a skill, except SKILL.md.
+
+    Hidden files and folders and symlinks are skipped, so the list only shows
+    what read_resource would actually serve.
+    """
+    root = skill.path.resolve()
+    found: list[str] = []
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root)
+        if any(part.startswith(".") for part in rel.parts) or p.is_symlink():
+            continue
+        if p.is_file() and rel.as_posix() != SKILL_FILE:
+            found.append(rel.as_posix())
+            if len(found) >= limit:
+                break
+    return found
+
+
+def resolve_resource(skill: Skill, rel_path: str) -> Path:
+    """Map a path the model asked for to a real file inside the skill folder.
+
+    Refuses absolute paths, `..`, hidden parts, SKILL.md itself, anything whose
+    resolved location (after following symlinks) is outside the folder, and
+    anything that is not a regular file (D15).
+    """
+    if not isinstance(rel_path, str) or not rel_path.strip():
+        raise SkillError("path is empty")
+    raw = rel_path.strip().replace("\\", "/")
+    if raw.startswith("./"):
+        raw = raw[2:]
+    if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw):
+        raise SkillError(f"path {rel_path!r} must be relative to the skill folder")
+    parts = [p for p in raw.split("/") if p not in ("", ".")]
+    if not parts:
+        raise SkillError("path is empty")
+    if ".." in parts:
+        raise SkillError(f"path {rel_path!r} may not contain '..'")
+    if any(p.startswith(".") for p in parts):
+        raise SkillError(f"path {rel_path!r} points to a hidden file")
+    if parts == [SKILL_FILE]:
+        raise SkillError("SKILL.md is the skill body; use load_skill for it")
+    root = skill.path.resolve()
+    target = root.joinpath(*parts)
+    try:
+        real = target.resolve(strict=True)
+    except (FileNotFoundError, RuntimeError, OSError):
+        raise SkillError(f"no file {raw!r} in skill {skill.name!r}") from None
+    if real != root and root not in real.parents:
+        raise SkillError(f"path {rel_path!r} resolves outside the skill folder")
+    if not real.is_file():
+        raise SkillError(f"{raw!r} is not a file")
+    return real
+
+
+def read_resource(skill: Skill, rel_path: str,
+                  max_bytes: int = RESOURCE_MAX_BYTES) -> tuple[str, bool]:
+    """Level 3 disclosure: return (text, truncated) for a file in the skill folder.
+
+    Reads at most max_bytes. Binary files (NUL byte or invalid UTF-8) are refused.
+    """
+    real = resolve_resource(skill, rel_path)
+    with real.open("rb") as fh:
+        data = fh.read(max_bytes + 1)
+    truncated = len(data) > max_bytes
+    data = data[:max_bytes]
+    if b"\x00" in data:
+        raise SkillError(f"{rel_path!r} is a binary file and cannot be read as text")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        if truncated and exc.start >= len(data) - 3:  # cut inside a multibyte char
+            text = data[:exc.start].decode("utf-8")
+        else:
+            raise SkillError(f"{rel_path!r} is not UTF-8 text") from None
+    return text, truncated
 
 
 @dataclass
