@@ -45,3 +45,23 @@ Answer: Only `load_skill`. `read_skill_file` is offered only when at least one s
 Verified: `Agent.tools()` and `_skills_with_files()`; `test_no_read_tool_when_no_skill_has_files`, `test_tool_schema_enumerates_skill_names`. **PASS**
 
 Day 2 result: 4/4 PASS. Day 1 questions rechecked against today's code: Q1 to Q5 still PASS (Q1 now also covers `test_system_prompt_mentions_read_tool_and_no_file_content`).
+
+## Day 3 (2026-10-24)
+
+**Q10. `team-glossary` has no `allowed-tools`. The model loads it and calls `run_skill_script("team-glossary", "scripts/x.py")`. What happens?**
+Answer: The call is refused before anything runs. `team-glossary` is not even in the `skill` enum of `run_skill_script`, because the tool only lists skills with a permitted script. If the call is made anyway, the agent returns an `error:` message (here `no file 'scripts/x.py'`, and for an existing but ungranted script `does not allow running ...`) followed by `Scripts this skill may run: none`. `ran_scripts` stays empty.
+Verified: `Agent.tools()` with the shipped skills gives the run enum `['ticket-checksum']` (checked by hand today); `resolve_script` checks the path first, then `script_permission`; `Agent._run_script` appends the runnable list on `SkillError`. Tests `test_skill_without_allowed_tools_cannot_run`, `test_refused_script_lists_runnable_ones`, `test_tool_offered_only_for_skills_with_permitted_scripts`. **PASS**
+
+**Q11. The model passes the args `["a b", "$(touch pwned)", "; rm -rf /"]`. What does the script receive?**
+Answer: Exactly three arguments, unchanged: `a b`, `$(touch pwned)` and `; rm -rf /`. There is no shell (`shell=False`, argv list), so nothing is expanded or executed, and no `pwned` file appears.
+Verified: `run_script` builds `INTERPRETERS[suffix] + [path] + check_args(args)` and calls `Popen(..., shell=False)`; `test_args_are_not_shell_parsed` asserts the echoed list and that `pwned` does not exist. **PASS**
+
+**Q12. A skill script calls `time.sleep(30)`. What does the model see, and how long does the agent wait?**
+Answer: About 10 seconds (`SCRIPT_TIMEOUT`). Then the whole process group is killed and the model gets `<script_result ... exit_code="timeout">` with a `[stopped: the script ran longer than 10 seconds]` line. `ran_scripts` records `skill/scripts/slow.py exit=timeout`.
+Verified: `run_script` uses `proc.wait(timeout=...)`, then `os.killpg`; `format_result` writes `timeout` and the stopped note. Tests `test_timeout_kills_the_script` (0.5 s limit, finishes in well under 5 s) and `test_failed_and_timed_out_runs_are_reported`. **PASS**
+
+**Q13. Pavan has `GITHUB_TOKEN` exported in his shell. Can a skill script read it?**
+Answer: No. The script gets a fresh environment with only `PATH`, `LANG`, `LC_ALL`, `PYTHONIOENCODING` and `PYTHONDONTWRITEBYTECODE`, and Python runs with `-I`. It can still read files Pavan can read, because this is not a full sandbox (D22, README).
+Verified: `_minimal_env()` in `scripts.py`; `test_cwd_env_and_stdin` sets `SECRET_TOKEN` in the test process and the script prints `None`. **PASS**
+
+Day 3 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q8 still PASS. Q9 is still PASS as written for the day 2 skill set, but with today's `ticket-checksum` skill (which bundles `scripts/check_letter.py`) the shipped `read_skill_file` enum is now `["incident-severity", "ticket-checksum"]`; `test_tool_schema_enumerates_skill_names` was updated to match.

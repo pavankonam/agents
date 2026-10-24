@@ -35,7 +35,7 @@ A developer who wants a local agent that can be taught new procedures by droppin
 
 * [x] **Day 1 (Thu 10/22):** Research, PRD, decision log, flow, quiz. `SKILL.md` parser (frontmatter subset: scalars, quotes, `|` and `>` blocks, nested `metadata`) and validator, `SkillLibrary.discover` with rejected list, XML catalog (level 1), agent loop with a single `load_skill` tool (level 2), three example skills plus one deliberately broken skill, LLM clients copied from week 01, tests, quiz_model with skill routing scenarios.
 * [x] **Day 2 (Fri 10/23):** Level 3 resources: `read_skill_file(skill, path)` confined to a loaded skill's folder (no `..`, no symlink escape, size cap), skill with a `references/` file that the body points to.
-* [ ] **Day 3 (Sat 10/24):** Skill scripts: `run_skill_script(skill, script, args)` runs files from `scripts/` with `subprocess` (no shell, timeout, output cap), gated by the skill's `allowed-tools`.
+* [x] **Day 3 (Sat 10/24):** Skill scripts: `run_skill_script(skill, script, args)` runs files from `scripts/` with `subprocess` (no shell, timeout, output cap), gated by the skill's `allowed-tools`.
 * [ ] **Day 4 (Sun 10/25):** Context budget: token estimates per level, a report comparing progressive disclosure with "paste every skill into the prompt", and a per run budget that refuses loads past a limit.
 * [ ] **Day 5 (Mon 10/26):** Routing eval: more scenarios including near misses and two skill tasks, per skill precision and recall in `quiz_model.py`, a description linter that flags vague descriptions.
 * [ ] **Day 6 (Tue 10/27):** CLI: `list`, `validate`, `inspect`, `run`, `doctor`, with `--json`, exit codes and `--skills-dir` (multiple roots).

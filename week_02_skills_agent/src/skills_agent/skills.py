@@ -7,8 +7,9 @@ followed by Markdown instructions. Progressive disclosure has three levels:
 1. catalog: only name + description of every skill sit in the system prompt
 2. body: the Markdown instructions, loaded when the model calls load_skill
 3. resources: extra files in the folder, read on demand with read_resource
+   (scripts in scripts/ can also be run, see scripts.py)
 
-See decision.md D7 to D12 (levels 1 and 2) and D14 to D17 (level 3).
+See decision.md D7 to D12 (levels 1 and 2), D14 to D17 (level 3), D19 to D23 (scripts).
 """
 
 from __future__ import annotations

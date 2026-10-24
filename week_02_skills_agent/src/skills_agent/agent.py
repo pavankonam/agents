@@ -5,6 +5,8 @@ calls the `load_skill` tool, and the full SKILL.md body comes back as a tool
 message together with the list of files bundled with the skill. If the body
 points to one of those files, the model calls `read_skill_file` to read it
 (level 3). That tool only works for skills that are already loaded (D14).
+If a skill allows it in `allowed-tools`, the model can also run one of the
+skill's scripts with `run_skill_script` (D19 to D23).
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .llm import LLMClient, ToolCall
+from .scripts import RUN_SKILL_SCRIPT, format_result, list_scripts, run_script
 from .skills import SkillError, SkillLibrary, list_resources, read_resource, resolve_resource
 
 LOAD_SKILL = "load_skill"
@@ -29,6 +32,8 @@ Rules:
 - Load only the skills you need. Never guess what a skill says.
 - If the loaded instructions point to a file in the skill (for example references/x.md),
   call {read_tool} with the skill name and that path before answering.
+- If the loaded instructions tell you to run a script, call {run_tool} with the skill
+  name, the script path and the args; use its output, do not compute it yourself.
 - If no skill matches, answer directly without calling any tool."""
 
 
@@ -68,12 +73,35 @@ def read_skill_file_schema(names: list[str]) -> dict:
     }
 
 
+def run_skill_script_schema(names: list[str]) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": RUN_SKILL_SCRIPT,
+            "description": ("Run a script from the scripts/ folder of a skill you already "
+                            "loaded, when its instructions say so. Returns its output."),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill": {"type": "string", "enum": names, "description": "exact skill name"},
+                    "script": {"type": "string",
+                               "description": "script path, for example scripts/check.py"},
+                    "args": {"type": "array", "items": {"type": "string"},
+                             "description": "command line arguments, one string each"},
+                },
+                "required": ["skill", "script"],
+            },
+        },
+    }
+
+
 @dataclass
 class AgentResult:
     answer: str
     stopped_reason: str  # "final_answer" or "max_steps"
     loaded_skills: list[str] = field(default_factory=list)
     read_files: list[str] = field(default_factory=list)  # "skill/path" for each level 3 read
+    ran_scripts: list[str] = field(default_factory=list)  # "skill/script exit=N" per run
     tool_calls: list[ToolCall] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
 
@@ -86,26 +114,36 @@ class Agent:
 
     def system_prompt(self) -> str:
         return SYSTEM_TEMPLATE.format(catalog=self.library.catalog(), tool=LOAD_SKILL,
-                                      read_tool=READ_SKILL_FILE)
+                                      read_tool=READ_SKILL_FILE, run_tool=RUN_SKILL_SCRIPT)
 
     def _skills_with_files(self) -> list[str]:
         return [n for n in self.library.names() if list_resources(self.library.skills[n], 1)]
 
+    def _skills_with_scripts(self) -> list[str]:
+        return [n for n in self.library.names() if list_scripts(self.library.skills[n])]
+
     def tools(self) -> list[dict]:
-        """load_skill always; read_skill_file only if some skill bundles files (D17)."""
+        """load_skill always; read_skill_file only if some skill bundles files (D17);
+        run_skill_script only if some skill has a permitted script (D21)."""
         if not self.library.skills:
             return []
         tools = [load_skill_schema(self.library.names())]
         with_files = self._skills_with_files()
         if with_files:
             tools.append(read_skill_file_schema(with_files))
+        with_scripts = self._skills_with_scripts()
+        if with_scripts:
+            tools.append(run_skill_script_schema(with_scripts))
         return tools
 
-    def _dispatch(self, call: ToolCall, loaded: list[str], read: list[str]) -> str:
+    def _dispatch(self, call: ToolCall, loaded: list[str], read: list[str],
+                  ran: list[str]) -> str:
         if call.name == LOAD_SKILL:
             return self._load(call, loaded)
         if call.name == READ_SKILL_FILE:
             return self._read(call, loaded, read)
+        if call.name == RUN_SKILL_SCRIPT:
+            return self._run_script(call, loaded, ran)
         names = ", ".join(t["function"]["name"] for t in self.tools()) or "none"
         return f"error: unknown tool {call.name!r}. Available tools: {names}."
 
@@ -134,6 +172,29 @@ class Agent:
         note = "\n[truncated: file is larger than the read limit]" if truncated else ""
         return f'<skill_file skill="{skill.name}" path="{rel}">\n{text}{note}\n</skill_file>'
 
+    def _run_script(self, call: ToolCall, loaded: list[str], ran: list[str]) -> str:
+        name, script = call.arguments.get("skill"), call.arguments.get("script")
+        if not isinstance(name, str) or not name.strip():
+            return f"error: {RUN_SKILL_SCRIPT} needs a 'skill' argument"
+        if not isinstance(script, str) or not script.strip():
+            return f"error: {RUN_SKILL_SCRIPT} needs a 'script' argument"
+        skill = self.library.get(name.strip())
+        if skill is None:
+            return f"error: no skill named {name!r}"
+        if skill.name not in loaded:
+            return (f"error: skill {skill.name!r} is not loaded. "
+                    f"Call {LOAD_SKILL} first, then run scripts it mentions.")
+        try:
+            result = run_script(skill, script, call.arguments.get("args"))
+        except SkillError as exc:
+            runnable = ", ".join(list_scripts(skill)) or "none"
+            return f"error: {exc}. Scripts this skill may run: {runnable}"
+        except OSError as exc:
+            return f"error: could not start {script!r}: {exc}"
+        status = "timeout" if result.timed_out else str(result.exit_code)
+        ran.append(f"{skill.name}/{result.script} exit={status}")
+        return format_result(skill, result)
+
     def _load(self, call: ToolCall, loaded: list[str]) -> str:
         name = call.arguments.get("name")
         if not isinstance(name, str) or not name:
@@ -154,6 +215,7 @@ class Agent:
                     {"role": "user", "content": task}]
         loaded: list[str] = []
         read: list[str] = []
+        ran: list[str] = []
         calls: list[ToolCall] = []
         tools = self.tools()
         for _ in range(self.max_steps):
@@ -164,10 +226,11 @@ class Agent:
                                      for c in reply.tool_calls]
             messages.append(msg)
             if not reply.tool_calls:
-                return AgentResult(reply.content, "final_answer", loaded, read, calls, messages)
+                return AgentResult(reply.content, "final_answer", loaded, read, ran, calls,
+                                   messages)
             for call in reply.tool_calls:
                 calls.append(call)
                 messages.append({"role": "tool", "tool_name": call.name,
-                                 "content": self._dispatch(call, loaded, read)})
+                                 "content": self._dispatch(call, loaded, read, ran)})
         return AgentResult("Stopped: step limit reached before a final answer.",
-                           "max_steps", loaded, read, calls, messages)
+                           "max_steps", loaded, read, ran, calls, messages)

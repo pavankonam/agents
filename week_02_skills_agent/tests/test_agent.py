@@ -25,14 +25,16 @@ def test_system_prompt_has_catalog_only():
 
 def test_tool_schema_enumerates_skill_names():
     tools = Agent(FakeClient([]), lib()).tools()
-    assert len(tools) == 2
+    assert len(tools) == 3  # load_skill, read_skill_file, run_skill_script (day 3)
     fn = tools[0]["function"]
     assert fn["name"] == LOAD_SKILL
     assert fn["parameters"]["properties"]["name"]["enum"] == lib().names()
     read = tools[1]["function"]
     assert read["name"] == READ_SKILL_FILE
     # only skills that bundle files are offered to read_skill_file (D17)
-    assert read["parameters"]["properties"]["skill"]["enum"] == ["incident-severity"]
+    # ticket-checksum bundles scripts/check_letter.py, so its source is readable too
+    assert read["parameters"]["properties"]["skill"]["enum"] == ["incident-severity",
+                                                                  "ticket-checksum"]
 
 
 def test_no_skills_means_no_tools():

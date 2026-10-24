@@ -114,7 +114,7 @@ def test_missing_skill_file(tmp_path):
 def test_discover_shipped_skills_rejects_broken():
     lib = SkillLibrary.discover(SKILLS)
     assert lib.names() == ["commit-message", "incident-severity", "team-glossary",
-                           "unit-converter"]
+                           "ticket-checksum", "unit-converter"]
     assert len(lib.rejected) == 1 and "broken_skill" in lib.rejected[0]
 
 

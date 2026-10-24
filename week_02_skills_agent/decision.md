@@ -98,3 +98,33 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** New `incident-severity` skill. Its body only says "read `references/severity-matrix.md`"; the colour codes (Code Crimson and so on) exist only in that file. The quiz scenario expects "Crimson" and requires exactly that file to be read. A test asserts the expected text is neither in the catalog nor in the body.
 **Why:** Same idea as D13 one level deeper: the answer can only be right if the model actually followed the pointer and read the file.
+
+## D19. Scripts are gated by the skill's own `allowed-tools` (2026-10-24)
+
+**Decision:** A script runs only if the skill's frontmatter grants it: `allowed-tools: run_skill_script` allows every script in `scripts/`, `run_skill_script(scripts/check.py)` allows one, and the part in brackets may be a glob (`scripts/*.py`). Entries are matched with `fnmatchcase`; anything else in `allowed-tools` (for example `Bash(git:*)`) grants nothing here.
+**Why:** The Agent Skills format already has `allowed-tools` for "tools this skill is pre-approved to use", so the permission lives next to the script it covers and is visible in review. Default is deny: a skill that only ships reference files can never become executable by someone dropping a `.py` into it. The bracket form mirrors how `Bash(...)` patterns look in existing skills, so it reads naturally.
+**Alternatives:** A global allow list in the agent (permission far from the skill), approval prompts per run like week 01 (good, but this week is about disclosure, and the week 01 policy layer could wrap this later), allow all scripts (unsafe).
+
+## D20. Interpreter from the extension, no shell, args as a list (2026-10-24)
+
+**Decision:** Only `scripts/*.py` (run with the agent's own Python in isolated mode, `-I -B`) and `scripts/*.sh` (run with `/bin/sh`) are runnable. Shebangs and the exec bit are ignored. The command is an argv list passed to `subprocess.Popen` with `shell=False`. Args must be a list of at most 16 strings of at most 500 chars without NUL; numbers are turned into strings, one bare string becomes one arg, and a string that looks like a JSON list is parsed (small models send that).
+**Why:** With no shell, `$(...)`, `;` and quotes inside an arg are plain text, so the model cannot inject commands even if a user tricks it. Choosing the interpreter ourselves means a script cannot pick an arbitrary binary through its first line. `-I` keeps the user's `PYTHONPATH` and site packages out.
+**Alternatives:** Execute the file directly (shebang decides, any language, but also any binary), `shell=True` with quoting (one bug away from injection).
+
+## D21. Same confinement as level 3, plus `scripts/` only, and load first (2026-10-24)
+
+**Decision:** `resolve_script` reuses `resolve_resource` (no absolute paths, `..`, hidden parts, `SKILL.md`, or symlinks that leave the folder), then requires the real path to be under `scripts/`. `run_skill_script` is refused until the skill is loaded, exactly like `read_skill_file` (D14). The tool is offered only when some skill has a permitted script, and its `skill` enum lists only those skills. Errors list the scripts the skill may run.
+**Why:** One path checker means one place to get right. Keeping scripts in `scripts/` matches the Agent Skills layout and stops a skill's reference or asset files from being executed. Load first keeps the order of progressive disclosure: the body says when and how to run the script.
+**Alternatives:** Allow scripts anywhere in the folder (blurs data and code).
+
+## D22. Process limits: timeout, capped output, minimal environment (2026-10-24)
+
+**Decision:** Each run gets a 10 second wall clock timeout, after which the whole process group is killed (`start_new_session=True` plus `killpg`, so child processes die too). stdout and stderr go to temporary files and at most 8,000 bytes of each are read back, with a `[truncated]` note. stdin is `/dev/null`, the working directory is the skill folder, and the environment has only `PATH`, `LANG`, `LC_ALL`, `PYTHONIOENCODING` and `PYTHONDONTWRITEBYTECODE` (so tokens in the user's shell, like `GITHUB_TOKEN`, never reach the script).
+**Why:** A bad or hostile script must not hang the agent, flood the model's context or read secrets from the environment. Writing to files instead of pipes keeps memory bounded even if a script prints gigabytes before the timeout. This is not a sandbox: a script can still read files the user can read. That limit is stated in the README.
+**Alternatives:** `resource` limits on CPU and memory (not portable to macOS for memory), a container or microVM (real isolation, but needs Docker; out of scope for a 7 day local project).
+
+## D23. Script results are data, recorded, and checked by the quiz (2026-10-24)
+
+**Decision:** The tool message is `<script_result skill=... script=... exit_code=...>` with `<stdout>` and, if not empty, `<stderr>`; a timeout shows `exit_code="timeout"`. A crash or non zero exit is a normal result the model can explain, not an exception. Every run is recorded in `AgentResult.ran_scripts` as `skill/script exit=N`. New `ticket-checksum` skill: the check letter for `HX-40217` (`C`) exists only in the script output, so the quiz scenario requires that exactly that script ran with exit 0, that its output contained `HX-40217-C`, and that the answer repeats it.
+**Why:** Same idea as D13 and D18, one level further: the model can only pass if it really ran the script and used its output. A weighted mod 23 check letter is something a 4B model gets wrong by hand, which is the realistic reason a skill ships a script.
+

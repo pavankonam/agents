@@ -21,7 +21,8 @@ def main(argv: list[str]) -> int:
         print(exc, file=sys.stderr)
         return 4
     print(f"[skills loaded: {', '.join(result.loaded_skills) or 'none'}]"
-          + (f" [files read: {', '.join(result.read_files)}]" if result.read_files else ""))
+          + (f" [files read: {', '.join(result.read_files)}]" if result.read_files else "")
+          + (f" [scripts run: {', '.join(result.ran_scripts)}]" if result.ran_scripts else ""))
     print(result.answer)
     return 0 if result.stopped_reason == "final_answer" else 3
 

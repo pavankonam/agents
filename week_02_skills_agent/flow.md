@@ -1,6 +1,6 @@
 # Flow: Skills Agent
 
-Status: **Day 2**. Every box exists in the code. Dashed boxes are planned for later days.
+Status: **Day 3**. Every box exists in the code. Dashed boxes are planned for later days.
 
 ```mermaid
 flowchart TD
@@ -14,7 +14,7 @@ flowchart TD
     CAT --> SP[System prompt]
     SP --> A
     A --> M[LLM client.chat<br/>OllamaClient or FakeClient<br/>tools: load_skill, plus read_skill_file<br/>if any skill bundles files]
-    M -->|final text| R[AgentResult<br/>answer, loaded_skills,<br/>read_files, tool_calls]
+    M -->|final text| R[AgentResult<br/>answer, loaded_skills,<br/>read_files, ran_scripts, tool_calls]
     M -->|tool_calls| DP{dispatch by tool name}
     DP -->|load_skill| L{load_skill name}
     DP -->|unknown tool| E
@@ -31,8 +31,15 @@ flowchart TD
     N --> A
     B --> A
     RD --> A
+    DP -->|run_skill_script| RS{skill loaded?}
+    RS -->|no| E
+    RS -->|yes| RSV{resolve_script<br/>same checks as level 3,<br/>inside scripts/, .py or .sh,<br/>allowed-tools grants it,<br/>args: list of strings}
+    RSV -->|refused| E3[error + scripts it may run]
+    RSV -->|ok| RUN["subprocess, no shell<br/>cwd = skill folder, minimal env,<br/>no stdin, 10 s timeout kills group,<br/>8 KB per stream"]
+    RUN --> SR["&lt;script_result exit_code=...&gt;<br/>stdout, stderr"]
+    E3 --> A
+    SR --> A
     A -->|max_steps reached| X[stopped: step limit]
-    RD -.->|day 3| SC[run_skill_script]
 ```
 
 ## How it works
@@ -41,5 +48,6 @@ flowchart TD
 2. **Level 1.** The system prompt contains only the catalog: each skill's name and description in XML. No instructions.
 3. **Level 2.** The model has the `load_skill` tool. Its `name` parameter is an enum of valid names. The tool returns the skill's Markdown body wrapped in `<skill name="...">`, followed by a `<skill_files>` list of the other files in the folder (names only). Loading the same skill again returns a short note instead.
 4. **Level 3.** If any skill bundles files, the model also gets `read_skill_file(skill, path)`. It only works after that skill was loaded. The path must be relative, without `..` or hidden parts, not `SKILL.md`, and its real location (symlinks followed) must be inside the skill folder. At most 16 KB of UTF-8 text comes back in `<skill_file>`; longer files are cut with a `[truncated]` note. Every successful read is recorded in `AgentResult.read_files`.
-5. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
-6. **Errors** (unknown skill, missing argument, unknown tool, file refused) go back to the model as tool messages starting with `error:`, so it can recover.
+5. **Scripts.** If a skill's frontmatter says `allowed-tools: run_skill_script` (or `run_skill_script(scripts/x.py)` for one script), the model also gets `run_skill_script(skill, script, args)`. It only works after `load_skill`. The script must be a `.py` or `.sh` file in the skill's `scripts/` folder, pass the same path checks as level 3, and be granted by `allowed-tools`. It runs with no shell (args are a list of strings), the skill folder as working directory, no stdin, a minimal environment and a 10 second timeout that kills the whole process group. Up to 8 KB of stdout and stderr come back in `<script_result exit_code=...>`. Every run is recorded in `AgentResult.ran_scripts`.
+6. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
+7. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.
