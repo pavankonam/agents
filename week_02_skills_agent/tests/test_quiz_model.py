@@ -69,3 +69,14 @@ def test_quiz_fails_when_script_output_lacks_the_answer(capsys, monkeypatch):
     monkeypatch.setattr(quiz, "SCENARIOS", bad)
     assert quiz.run(fake=True, model=None) == 1
     assert "ran scripts" in capsys.readouterr().out
+
+
+def test_fake_run_reports_context(capsys):
+    assert quiz.run(fake=True, model=None, only="BHX") == 0
+    out = capsys.readouterr().out
+    assert "tokens)" in out and "pasting every skill would start at" in out
+
+
+def test_tight_budget_makes_skill_scenarios_fail(capsys):
+    assert quiz.run(fake=True, model=None, only="BHX", budget=50) == 1
+    assert "budget refused: load_skill team-glossary" in capsys.readouterr().out

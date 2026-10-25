@@ -3,6 +3,7 @@
     python3 -B quiz/quiz_model.py --fake          # scripted model, no Ollama needed
     python3 -B quiz/quiz_model.py                 # real model (default qwen3:4b)
     python3 -B quiz/quiz_model.py --model llama3.2 --only BHX
+    python3 -B quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
 
 A scenario passes when the agent loaded exactly the expected skills (no extra
 ones), read exactly the expected skill files (level 3), ran exactly the expected
@@ -23,7 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from skills_agent import (  # noqa: E402
     LOAD_SKILL, READ_SKILL_FILE, RUN_SKILL_SCRIPT, Agent, FakeClient, LLMResponse, OllamaClient, SkillLibrary,
-    ToolCall, check_ollama,
+    ToolCall, check_ollama, context_report,
 )
 from skills_agent.llm import DEFAULT_MODEL  # noqa: E402
 
@@ -74,7 +75,8 @@ def script_output_contains(result, expected: str) -> bool:
                and expected in m.get("content", "") for m in result.messages)
 
 
-def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama) -> int:
+def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama,
+        budget: int | None = None) -> int:
     if not fake:
         ok, msg = check(model or DEFAULT_MODEL)
         if not ok:
@@ -86,11 +88,12 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         print(f"No scenario matches --only {only!r}")
         return 2
     passed = 0
+    spent = []
     for question, skills, files, scripts, expected in scenarios:
         llm = (FakeClient(fake_script(skills, files, scripts, expected)) if fake
                else OllamaClient(**({"model": model} if model else {})))
         t0 = time.perf_counter()
-        result = Agent(llm, lib).run(question)
+        result = Agent(llm, lib, budget_tokens=budget).run(question)
         secs = time.perf_counter() - t0
         skills_ok = sorted(result.loaded_skills) == sorted(skills)
         files_ok = sorted(result.read_files) == sorted(files)
@@ -101,13 +104,21 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         ok = (skills_ok and files_ok and scripts_ok and answer_ok
               and result.stopped_reason == "final_answer")
         passed += ok
-        print(f"[{'PASS' if ok else 'FAIL'}] {question} ({secs:.1f}s)")
+        spent.append(result.context["spent"])
+        print(f"[{'PASS' if ok else 'FAIL'}] {question} ({secs:.1f}s, "
+              f"~{result.context['spent']} tokens)")
+        if result.context["refused"]:
+            print(f"    budget refused: {'; '.join(result.context['refused'])}")
         if not ok:
             print(f"    loaded {result.loaded_skills} (expected {skills})")
             print(f"    read files {result.read_files} (expected {files})")
             print(f"    ran scripts {result.ran_scripts} (expected {want_runs})")
             print(f"    answer: {result.answer[:200]!r} (expected to contain {expected!r})")
-    print(f"\n{passed}/{len(scenarios)} passed "
+    eager = context_report(lib)["eager"]["system_prompt"]
+    print(f"\ncontext: average ~{round(sum(spent) / len(spent))} tokens per scenario, "
+          f"max ~{max(spent)}; pasting every skill would start at ~{eager}"
+          + (f"; budget {budget}" if budget else ""))
+    print(f"{passed}/{len(scenarios)} passed "
           f"({'fake model' if fake else model or DEFAULT_MODEL})")
     return 0 if passed == len(scenarios) else 1
 
@@ -117,5 +128,6 @@ if __name__ == "__main__":
     ap.add_argument("--fake", action="store_true", help="use the scripted fake model")
     ap.add_argument("--model", help="Ollama model name, default qwen3:4b")
     ap.add_argument("--only", help="run only scenarios whose question contains this text")
+    ap.add_argument("--budget", type=int, help="per run context budget in estimated tokens")
     a = ap.parse_args()
-    raise SystemExit(run(a.fake, a.model, a.only))
+    raise SystemExit(run(a.fake, a.model, a.only, budget=a.budget))

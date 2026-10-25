@@ -65,3 +65,23 @@ Answer: No. The script gets a fresh environment with only `PATH`, `LANG`, `LC_AL
 Verified: `_minimal_env()` in `scripts.py`; `test_cwd_env_and_stdin` sets `SECRET_TOKEN` in the test process and the script prints `None`. **PASS**
 
 Day 3 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q8 still PASS. Q9 is still PASS as written for the day 2 skill set, but with today's `ticket-checksum` skill (which bundles `scripts/check_letter.py`) the shipped `read_skill_file` enum is now `["incident-severity", "ticket-checksum"]`; `test_tool_schema_enumerates_skill_names` was updated to match.
+
+## Day 4 (2026-10-25)
+
+**Q14. How does the agent count tokens, and why is that good enough here?**
+Answer: `estimate_tokens(text)` is `ceil(len(text) / 4)`, 0 for empty text; tool schemas are estimated from their compact JSON. It is only used to compare strategies and to enforce a limit, and both sides use the same estimate, so no model specific tokenizer is needed (D24).
+Verified: `estimate_tokens` and `tools_tokens` in `budget.py`; `test_estimate_tokens_is_ceil_chars_over_four` (`"abcde"` is 2, 400 chars are 100) and `test_tools_tokens_empty_and_nonempty`. **PASS**
+
+**Q15. With the shipped skills, is progressive disclosure always cheaper than pasting every skill into the prompt?**
+Answer: No. Before any load it is 919 vs 1,316 estimated tokens (30% cheaper), with one average skill used 1,155 (12% cheaper), but a task that loads every skill and file costs 2,100, more than pasting, because the rules and three tool schemas add about 600 fixed tokens. The projection shows the gap growing with more skills: at 100 skills about 8,033 vs 23,755.
+Verified: ran `python3 -m skills_agent.budget` today and got exactly these numbers; `test_report_numbers_are_consistent` asserts base < pasted < all loaded and that the projected gap grows and ends positive. **PASS**
+
+**Q16. `budget_tokens=950` and the model calls `load_skill("team-glossary")`. What happens, and can it then call `read_skill_file` on that skill?**
+Answer: The system part (prompt, task, tool schemas, 924 tokens) is always sent. The 160 token body does not fit in the 26 left, so the model gets `error: context budget: load_skill team-glossary needs about 160 tokens but only 26 of 950 are left ...`, the body is not shown and the skill is not added to `loaded_skills`. So any later `read_skill_file` or `run_skill_script` for it fails with `is not loaded`. `context["refused"]` records it and `spent` ends at 970, a little over the limit, because the refusal message itself is charged as `other` (D26).
+Verified: ran exactly this by hand today (output `spent 970, system 924, other 46, refused ['load_skill team-glossary needs 160']`); `Agent._load` calls `_over_budget` before `loaded.append`; tests `test_load_past_the_limit_is_refused_and_not_loaded` and `test_refused_load_keeps_files_locked`. **PASS**
+
+**Q17. The script output does not fit in the remaining budget. Did the script run?**
+Answer: Yes. A script cannot be priced before it runs, so it runs, `ran_scripts` records `ticket-checksum/scripts/check_letter.py exit=0`, but the model gets `error: context budget: output of ticket-checksum/scripts/check_letter.py ...` instead of the output, and `context["script"]` stays 0 (D27).
+Verified: `Agent._run_script` appends to `ran` before calling `_over_budget("script", ...)`; `test_script_output_past_the_limit_is_withheld_but_run_is_recorded` asserts the error, that `HX-40217-C` is absent and the `ran_scripts` entry. **PASS**
+
+Day 4 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q13 still PASS. The system prompt and tool schemas did not change today (budget refusals are tool messages), so Q1, Q9 and Q10 hold as written; `SkillLibrary.catalog()` now builds its rows with the new `catalog_entry`, and `test_catalog_has_descriptions_but_no_bodies` still passes.

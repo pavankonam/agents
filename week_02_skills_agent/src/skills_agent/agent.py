@@ -7,12 +7,15 @@ points to one of those files, the model calls `read_skill_file` to read it
 (level 3). That tool only works for skills that are already loaded (D14).
 If a skill allows it in `allowed-tools`, the model can also run one of the
 skill's scripts with `run_skill_script` (D19 to D23).
+Every run is metered by a ContextBudget; with `budget_tokens` set, a tool result
+that would push the run past the limit is refused (D26, D27).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .budget import ContextBudget, estimate_tokens, tools_tokens
 from .llm import LLMClient, ToolCall
 from .scripts import RUN_SKILL_SCRIPT, format_result, list_scripts, run_script
 from .skills import SkillError, SkillLibrary, list_resources, read_resource, resolve_resource
@@ -104,13 +107,17 @@ class AgentResult:
     ran_scripts: list[str] = field(default_factory=list)  # "skill/script exit=N" per run
     tool_calls: list[ToolCall] = field(default_factory=list)
     messages: list[dict] = field(default_factory=list)
+    context: dict = field(default_factory=dict)  # ContextBudget.summary() of the run (D26)
 
 
 class Agent:
-    def __init__(self, llm: LLMClient, library: SkillLibrary, max_steps: int = 6):
+    def __init__(self, llm: LLMClient, library: SkillLibrary, max_steps: int = 6,
+                 budget_tokens: int | None = None):
         self.llm = llm
         self.library = library
         self.max_steps = max_steps
+        self.budget_tokens = budget_tokens
+        self._budget = ContextBudget(budget_tokens)  # also validates the limit
 
     def system_prompt(self) -> str:
         return SYSTEM_TEMPLATE.format(catalog=self.library.catalog(), tool=LOAD_SKILL,
@@ -135,6 +142,20 @@ class Agent:
         if with_scripts:
             tools.append(run_skill_script_schema(with_scripts))
         return tools
+
+    def _over_budget(self, kind: str, what: str, content: str) -> str | None:
+        """Charge `content` to the run budget, or return a refusal if it does not fit."""
+        b = self._budget
+        cost = estimate_tokens(content)
+        if b.fits(cost):
+            b.charge(kind, cost)
+            return None
+        b.refused.append(f"{what} needs {cost}")
+        msg = (f"error: context budget: {what} needs about {cost} tokens but only "
+               f"{b.remaining} of {b.limit} are left in this run. Answer with what you "
+               "already have, or say which information is missing.")
+        b.charge("other", estimate_tokens(msg))
+        return msg
 
     def _dispatch(self, call: ToolCall, loaded: list[str], read: list[str],
                   ran: list[str]) -> str:
@@ -167,10 +188,14 @@ class Agent:
             return f"error: {exc}. Files in this skill: {files}"
         rel = real.relative_to(skill.path.resolve()).as_posix()
         key = f"{skill.name}/{rel}"
+        note = "\n[truncated: file is larger than the read limit]" if truncated else ""
+        content = f'<skill_file skill="{skill.name}" path="{rel}">\n{text}{note}\n</skill_file>'
+        refusal = self._over_budget("read", f"{READ_SKILL_FILE} {key}", content)
+        if refusal:
+            return refusal
         if key not in read:
             read.append(key)
-        note = "\n[truncated: file is larger than the read limit]" if truncated else ""
-        return f'<skill_file skill="{skill.name}" path="{rel}">\n{text}{note}\n</skill_file>'
+        return content
 
     def _run_script(self, call: ToolCall, loaded: list[str], ran: list[str]) -> str:
         name, script = call.arguments.get("skill"), call.arguments.get("script")
@@ -193,7 +218,10 @@ class Agent:
             return f"error: could not start {script!r}: {exc}"
         status = "timeout" if result.timed_out else str(result.exit_code)
         ran.append(f"{skill.name}/{result.script} exit={status}")
-        return format_result(skill, result)
+        content = format_result(skill, result)
+        # the script already ran; only its output is withheld if it does not fit (D27)
+        refusal = self._over_budget("script", f"output of {skill.name}/{result.script}", content)
+        return refusal or content
 
     def _load(self, call: ToolCall, loaded: list[str]) -> str:
         name = call.arguments.get("name")
@@ -205,19 +233,27 @@ class Agent:
                     f"Available: {', '.join(self.library.names()) or 'none'}")
         if skill.name in loaded:
             return f"note: skill {skill.name!r} is already loaded above; follow those instructions."
-        loaded.append(skill.name)
         files = list_resources(skill)
         listing = ("\n<skill_files>\n" + "\n".join(files) + "\n</skill_files>") if files else ""
-        return f'<skill name="{skill.name}">\n{skill.body}{listing}\n</skill>'
+        content = f'<skill name="{skill.name}">\n{skill.body}{listing}\n</skill>'
+        refusal = self._over_budget("load", f"{LOAD_SKILL} {skill.name}", content)
+        if refusal:
+            return refusal  # not loaded, so its files and scripts stay locked (D27)
+        loaded.append(skill.name)
+        return content
 
     def run(self, task: str) -> AgentResult:
         messages = [{"role": "system", "content": self.system_prompt()},
                     {"role": "user", "content": task}]
+        self._budget = budget = ContextBudget(self.budget_tokens)
+        tools = self.tools()
+        # the prompt, task and tool schemas are always sent, even past the limit
+        budget.charge("system", estimate_tokens(messages[0]["content"])
+                      + estimate_tokens(task) + tools_tokens(tools))
         loaded: list[str] = []
         read: list[str] = []
         ran: list[str] = []
         calls: list[ToolCall] = []
-        tools = self.tools()
         for _ in range(self.max_steps):
             reply = self.llm.chat(messages, tools)
             msg: dict = {"role": "assistant", "content": reply.content}
@@ -227,10 +263,13 @@ class Agent:
             messages.append(msg)
             if not reply.tool_calls:
                 return AgentResult(reply.content, "final_answer", loaded, read, ran, calls,
-                                   messages)
+                                   messages, budget.summary())
             for call in reply.tool_calls:
                 calls.append(call)
-                messages.append({"role": "tool", "tool_name": call.name,
-                                 "content": self._dispatch(call, loaded, read, ran)})
+                before = budget.spent
+                content = self._dispatch(call, loaded, read, ran)
+                if budget.spent == before:  # errors and notes are small, but still context
+                    budget.charge("other", estimate_tokens(content))
+                messages.append({"role": "tool", "tool_name": call.name, "content": content})
         return AgentResult("Stopped: step limit reached before a final answer.",
-                           "max_steps", loaded, read, ran, calls, messages)
+                           "max_steps", loaded, read, ran, calls, messages, budget.summary())

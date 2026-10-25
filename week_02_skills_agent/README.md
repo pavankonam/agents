@@ -2,7 +2,7 @@
 
 A small agent that uses **Agent Skills** (folders with a `SKILL.md` file) on a **free local model through Ollama**. The model only sees each skill's name and description, and loads the full instructions when a task needs them (progressive disclosure). See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 3 of 7. Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), five example skills, 123 tests.
+**Status:** Day 4 of 7. Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), a context budget that meters every run and refuses disclosures past a limit, a report comparing progressive disclosure with pasting every skill, five example skills, 144 tests.
 
 ## Run it
 
@@ -18,7 +18,7 @@ python3 -m skills_agent "What is the full ticket ID with check letter for HX-402
 SKILLS_AGENT_MODEL=llama3.2 python3 -m skills_agent "Write a commit message for: add retry to the HTTP client"
 ```
 
-The first line of output shows which skills the model loaded, which skill files it read and which skill scripts it ran.
+The first line of output shows which skills the model loaded, which skill files it read, which skill scripts it ran and roughly how many tokens the run put into the context. Add `--budget 1200` before the task to cap that (see below).
 
 ## Three levels of disclosure
 
@@ -42,6 +42,27 @@ allowed-tools: run_skill_script                            # every script in scr
 Rules: only `.py` (run with this Python in isolated mode) and `.sh` (run with `/bin/sh`) files inside `scripts/`, after the skill was loaded; no shell, so args are passed exactly as given; working directory is the skill folder; no stdin; a minimal environment (your shell's tokens and keys are not passed on); 10 second timeout that kills the script and its children; at most 8 KB of stdout and of stderr reach the model.
 
 This is a guard rail, not a sandbox: a permitted script can still read and write files your user account can. Only grant `run_skill_script` to skills you have read.
+
+## Context budget
+
+Progressive disclosure exists to keep the context small. `budget.py` measures that, estimating tokens as characters / 4:
+
+```bash
+PYTHONPATH=src python3 -m skills_agent.budget          # table; add --json for machine output
+```
+
+With the shipped skills (estimated tokens):
+
+| | Tokens |
+| --- | --- |
+| Progressive, before any load (prompt 586 + tool schemas 333) | 919 |
+| Progressive, one average skill used | 1,155 |
+| Progressive, every skill and file loaded | 2,100 |
+| Paste every skill and file into the prompt | 1,316 |
+
+So with five small skills progressive disclosure saves 30% before a load and 12% with one skill used, and it loses if a task needs every skill, because the rules and tool schemas are a fixed overhead. It pays off as the library grows: at 20 skills of the same size one used skill costs about 2,241 tokens against 4,859 pasted, at 100 skills 8,033 against 23,755.
+
+Every run reports its cost in `AgentResult.context` (`system`, `load`, `read`, `script`, `other`, `spent`, `refused`). With `Agent(..., budget_tokens=N)` or `--budget N`, a skill body, file or script output that would push the run past N is replaced by an `error: context budget ...` message. A refused skill is not marked as loaded, so its files and scripts stay locked; a script still runs, only its output is withheld. The system prompt is always sent, so `spent` can end slightly above N.
 
 ## Skills
 
@@ -72,6 +93,7 @@ python3 -m pytest -q                       # fake LLM, no Ollama needed
 python3 quiz/quiz_model.py --fake          # check the harness
 python3 quiz/quiz_model.py                 # ask qwen3:4b; checks it loads the right skill
 python3 quiz/quiz_model.py --model llama3.2 --only BHX
+python3 quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
 ```
 
-A quiz scenario passes only if the model loaded exactly the expected skills, read exactly the expected skill files, ran exactly the expected scripts with exit code 0, and its answer contains text that exists only in the skill body, the referenced file or the script output.
+A quiz scenario passes only if the model loaded exactly the expected skills, read exactly the expected skill files, ran exactly the expected scripts with exit code 0, and its answer contains text that exists only in the skill body, the referenced file or the script output. Each line also shows the estimated tokens the run used, and the summary compares the average with pasting every skill.

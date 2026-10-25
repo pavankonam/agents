@@ -287,13 +287,15 @@ class SkillLibrary:
     def get(self, name: str) -> Skill | None:
         return self.skills.get(name)
 
+    def catalog_entry(self, name: str) -> str:
+        """One skill's entry in the catalog (used by the context report, D25)."""
+        s = self.skills[name]
+        return (f"  <skill>\n    <name>{escape(s.name)}</name>\n"
+                f"    <description>{escape(s.description)}</description>\n  </skill>")
+
     def catalog(self) -> str:
         """Level 1 disclosure: name and description only, as XML for the system prompt."""
         if not self.skills:
             return "<available_skills>\n</available_skills>"
-        rows = []
-        for name in self.names():
-            s = self.skills[name]
-            rows.append(f"  <skill>\n    <name>{escape(s.name)}</name>\n"
-                        f"    <description>{escape(s.description)}</description>\n  </skill>")
+        rows = [self.catalog_entry(name) for name in self.names()]
         return "<available_skills>\n" + "\n".join(rows) + "\n</available_skills>"

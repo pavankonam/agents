@@ -1,6 +1,6 @@
 # Flow: Skills Agent
 
-Status: **Day 3**. Every box exists in the code. Dashed boxes are planned for later days.
+Status: **Day 4**. Every box exists in the code. The dashed arrow is the per kind meter that ends up in `AgentResult.context`.
 
 ```mermaid
 flowchart TD
@@ -29,8 +29,6 @@ flowchart TD
     E --> A
     E2 --> A
     N --> A
-    B --> A
-    RD --> A
     DP -->|run_skill_script| RS{skill loaded?}
     RS -->|no| E
     RS -->|yes| RSV{resolve_script<br/>same checks as level 3,<br/>inside scripts/, .py or .sh,<br/>allowed-tools grants it,<br/>args: list of strings}
@@ -38,8 +36,15 @@ flowchart TD
     RSV -->|ok| RUN["subprocess, no shell<br/>cwd = skill folder, minimal env,<br/>no stdin, 10 s timeout kills group,<br/>8 KB per stream"]
     RUN --> SR["&lt;script_result exit_code=...&gt;<br/>stdout, stderr"]
     E3 --> A
-    SR --> A
     A -->|max_steps reached| X[stopped: step limit]
+    B --> BG
+    RD --> BG
+    SR --> BG
+    BG{ContextBudget<br/>fits in budget_tokens?<br/>budget.py}
+    BG -->|yes| A
+    BG -->|no| E4[error: context budget<br/>skill not loaded, file not shown,<br/>script output withheld]
+    E4 --> A
+    BG -.->|meter per kind| R
 ```
 
 ## How it works
@@ -49,5 +54,6 @@ flowchart TD
 3. **Level 2.** The model has the `load_skill` tool. Its `name` parameter is an enum of valid names. The tool returns the skill's Markdown body wrapped in `<skill name="...">`, followed by a `<skill_files>` list of the other files in the folder (names only). Loading the same skill again returns a short note instead.
 4. **Level 3.** If any skill bundles files, the model also gets `read_skill_file(skill, path)`. It only works after that skill was loaded. The path must be relative, without `..` or hidden parts, not `SKILL.md`, and its real location (symlinks followed) must be inside the skill folder. At most 16 KB of UTF-8 text comes back in `<skill_file>`; longer files are cut with a `[truncated]` note. Every successful read is recorded in `AgentResult.read_files`.
 5. **Scripts.** If a skill's frontmatter says `allowed-tools: run_skill_script` (or `run_skill_script(scripts/x.py)` for one script), the model also gets `run_skill_script(skill, script, args)`. It only works after `load_skill`. The script must be a `.py` or `.sh` file in the skill's `scripts/` folder, pass the same path checks as level 3, and be granted by `allowed-tools`. It runs with no shell (args are a list of strings), the skill folder as working directory, no stdin, a minimal environment and a 10 second timeout that kills the whole process group. Up to 8 KB of stdout and stderr come back in `<script_result exit_code=...>`. Every run is recorded in `AgentResult.ran_scripts`.
-6. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
-7. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.
+6. **Context budget.** Every run has a `ContextBudget` (`budget.py`). It charges the system prompt, task and tool schemas, then every tool result, estimating tokens as characters / 4. With `budget_tokens` set, a skill body, file or script output that would push the run past the limit is replaced by `error: context budget ...`; a refused skill is not marked loaded. The per kind totals end up in `AgentResult.context`. `python3 -m skills_agent.budget` prints the cost of each level and compares it with pasting every skill into the prompt.
+7. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
+8. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.
