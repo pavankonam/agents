@@ -2,7 +2,7 @@
 
 A small agent that uses **Agent Skills** (folders with a `SKILL.md` file) on a **free local model through Ollama**. The model only sees each skill's name and description, and loads the full instructions when a task needs them (progressive disclosure). See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 4 of 7. Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), a context budget that meters every run and refuses disclosures past a limit, a report comparing progressive disclosure with pasting every skill, five example skills, 144 tests.
+**Status:** Day 5 of 7. Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), a context budget that meters every run and refuses disclosures past a limit, a report comparing progressive disclosure with pasting every skill, a routing eval (description linter, near miss and two skill scenarios, per skill precision and recall), five example skills, 164 tests.
 
 ## Run it
 
@@ -64,6 +64,26 @@ So with five small skills progressive disclosure saves 30% before a load and 12%
 
 Every run reports its cost in `AgentResult.context` (`system`, `load`, `read`, `script`, `other`, `spent`, `refused`). With `Agent(..., budget_tokens=N)` or `--budget N`, a skill body, file or script output that would push the run past N is replaced by an `error: context budget ...` message. A refused skill is not marked as loaded, so its files and scripts stay locked; a script still runs, only its output is withheld. The system prompt is always sent, so `spent` can end slightly above N.
 
+## Routing eval
+
+At level 1 the model sees only each skill's description, so the description decides whether the right skill gets loaded. Two tools check that:
+
+```bash
+PYTHONPATH=src python3 -m skills_agent.routing          # lint descriptions; --json, --skills-dir
+```
+
+| Rule | Flags |
+| --- | --- |
+| R1-short | fewer than 12 words |
+| R2-no-trigger | no "Use when ..." clause |
+| R3-vague | words like "helps with", "various", "stuff", "anything" |
+| R4-first-person | "I", "my", "we" instead of third person |
+| R5-overlap | two descriptions with a content word Jaccard score above 0.35 |
+
+The shipped skills lint clean; the closest pair is commit-message / team-glossary at 0.07. Lint issues are warnings: the skill still loads, the command exits 1.
+
+The quiz now also has a two skill task (glossary plus unit conversion in one question) and three near misses that share words with a description but need no skill ("Convert this sentence to the passive voice", "What does the acronym NASA stand for?", "In one sentence, what is a git commit?"). After the scenarios it prints a per skill table (tp, fp, fn, precision, recall), exact routing, how many no-skill runs stayed without a skill, and the lint result. Low precision means a description is too broad, low recall means it is too narrow.
+
 ## Skills
 
 | Skill | What it teaches the model |
@@ -94,6 +114,7 @@ python3 quiz/quiz_model.py --fake          # check the harness
 python3 quiz/quiz_model.py                 # ask qwen3:4b; checks it loads the right skill
 python3 quiz/quiz_model.py --model llama3.2 --only BHX
 python3 quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
+python3 quiz/quiz_model.py --only "near miss"     # only the near miss scenarios
 ```
 
 A quiz scenario passes only if the model loaded exactly the expected skills, read exactly the expected skill files, ran exactly the expected scripts with exit code 0, and its answer contains text that exists only in the skill body, the referenced file or the script output. Each line also shows the estimated tokens the run used, and the summary compares the average with pasting every skill.

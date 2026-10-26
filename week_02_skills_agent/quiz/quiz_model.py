@@ -4,12 +4,19 @@
     python3 -B quiz/quiz_model.py                 # real model (default qwen3:4b)
     python3 -B quiz/quiz_model.py --model llama3.2 --only BHX
     python3 -B quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
+    python3 -B quiz/quiz_model.py --only "near miss"      # only the near miss scenarios
 
 A scenario passes when the agent loaded exactly the expected skills (no extra
 ones), read exactly the expected skill files (level 3), ran exactly the expected
 skill scripts with exit code 0, and the answer contains the expected text, which
 only the skill body, the referenced file or the script output knows. That last
 check proves the content was used, not just fetched.
+
+The expected text can be a tuple; then the answer must contain every part (used
+by the two skill scenario). Scenarios that expect no skill include near misses:
+tasks that share words with a skill description but do not need the skill. At
+the end the quiz prints per skill precision and recall over all scenarios and
+lints the skill descriptions (routing.py, D28 to D30).
 """
 
 from __future__ import annotations
@@ -26,12 +33,14 @@ from skills_agent import (  # noqa: E402
     LOAD_SKILL, READ_SKILL_FILE, RUN_SKILL_SCRIPT, Agent, FakeClient, LLMResponse, OllamaClient, SkillLibrary,
     ToolCall, check_ollama, context_report,
 )
+from skills_agent.routing import format_metrics, lint_library, routing_metrics  # noqa: E402
 from skills_agent.llm import DEFAULT_MODEL  # noqa: E402
 
 SKILLS_DIR = ROOT / "skills"
 
 # (question, skills that must be loaded, files that must be read as "skill/path",
-#  scripts that must run as ("skill/script", [args]), text the answer must contain)
+#  scripts that must run as ("skill/script", [args]), text the answer must contain;
+#  a tuple means every part must be in the answer)
 SCENARIOS = [
     ("What does BHX stand for on our team?", ["team-glossary"], [], [], "Blue Heron Expansion"),
     ("Someone mentioned ORCA in a meeting. What is it?", ["team-glossary"], [], [],
@@ -47,7 +56,31 @@ SCENARIOS = [
      ["ticket-checksum"], [], [("ticket-checksum/scripts/check_letter.py", ["HX-40217"])],
      "HX-40217-C"),
     ("Reply with exactly the word: ready", [], [], [], "ready"),
+    # two skill task: both skills are needed, each answer part lives in one body
+    ("What does BHX stand for, and how many km is 5 miles?",
+     ["team-glossary", "unit-converter"], [], [], ("Blue Heron Expansion", "8.05")),
+    # near misses: words from a skill description, but no skill is needed
+    ("Convert this sentence to the passive voice: the team fixed the bug.",
+     [], [], [], "was fixed"),
+    ("What does the acronym NASA stand for?", [], [], [], "Aeronautics"),
+    ("In one sentence, what is a git commit?", [], [], [], "snapshot"),
 ]
+
+# Labels only for the report and --only; the model never sees them (D30).
+NEAR_MISS = {
+    "Convert this sentence to the passive voice: the team fixed the bug.",
+    "What does the acronym NASA stand for?",
+    "In one sentence, what is a git commit?",
+}
+
+
+def label(question: str) -> str:
+    return f"(near miss) {question}" if question in NEAR_MISS else question
+
+
+def parts(expected) -> tuple[str, ...]:
+    """The expected text as a tuple of strings that must all be in the answer."""
+    return (expected,) if isinstance(expected, str) else tuple(expected)
 
 
 def fake_script(skills: list[str], files: list[str], scripts: list[tuple[str, list[str]]],
@@ -66,13 +99,14 @@ def fake_script(skills: list[str], files: list[str], scripts: list[tuple[str, li
         skill, _, path = target.partition("/")
         turns.append(LLMResponse(tool_calls=[ToolCall(
             RUN_SKILL_SCRIPT, {"skill": skill, "script": path, "args": list(args)})]))
-    return turns + [LLMResponse(content=f"Answer: {expected}")]
+    return turns + [LLMResponse(content="Answer: " + "; ".join(parts(expected)))]
 
 
-def script_output_contains(result, expected: str) -> bool:
-    """True if some script_result tool message contains the expected text."""
+def script_output_contains(result, expected) -> bool:
+    """True if some script_result tool message contains one of the expected parts."""
     return any(m.get("role") == "tool" and m.get("tool_name") == RUN_SKILL_SCRIPT
-               and expected in m.get("content", "") for m in result.messages)
+               and any(p in m.get("content", "") for p in parts(expected))
+               for m in result.messages)
 
 
 def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama,
@@ -83,12 +117,13 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
             print(f"PROBLEM: {msg}")
             return 4
     lib = SkillLibrary.discover(SKILLS_DIR)
-    scenarios = [s for s in SCENARIOS if not only or only.lower() in s[0].lower()]
+    scenarios = [s for s in SCENARIOS if not only or only.lower() in label(s[0]).lower()]
     if not scenarios:
         print(f"No scenario matches --only {only!r}")
         return 2
     passed = 0
     spent = []
+    routes = []
     for question, skills, files, scripts, expected in scenarios:
         llm = (FakeClient(fake_script(skills, files, scripts, expected)) if fake
                else OllamaClient(**({"model": model} if model else {})))
@@ -100,12 +135,13 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         want_runs = sorted(f"{t} exit=0" for t, _ in scripts)
         scripts_ok = sorted(result.ran_scripts) == want_runs and (
             not scripts or script_output_contains(result, expected))
-        answer_ok = expected.lower() in result.answer.lower()
+        answer_ok = all(p.lower() in result.answer.lower() for p in parts(expected))
+        routes.append((skills, result.loaded_skills))
         ok = (skills_ok and files_ok and scripts_ok and answer_ok
               and result.stopped_reason == "final_answer")
         passed += ok
         spent.append(result.context["spent"])
-        print(f"[{'PASS' if ok else 'FAIL'}] {question} ({secs:.1f}s, "
+        print(f"[{'PASS' if ok else 'FAIL'}] {label(question)} ({secs:.1f}s, "
               f"~{result.context['spent']} tokens)")
         if result.context["refused"]:
             print(f"    budget refused: {'; '.join(result.context['refused'])}")
@@ -114,8 +150,14 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
             print(f"    read files {result.read_files} (expected {files})")
             print(f"    ran scripts {result.ran_scripts} (expected {want_runs})")
             print(f"    answer: {result.answer[:200]!r} (expected to contain {expected!r})")
+    print("\nrouting (per skill, over these scenarios):")
+    print(format_metrics(routing_metrics(routes, lib.names())))
+    issues = lint_library(lib)
+    print(f"description lint: {len(issues) or 'no'} issue{'s' * (len(issues) != 1)}")
+    for issue in issues:
+        print(f"    {issue}")
     eager = context_report(lib)["eager"]["system_prompt"]
-    print(f"\ncontext: average ~{round(sum(spent) / len(spent))} tokens per scenario, "
+    print(f"context: average ~{round(sum(spent) / len(spent))} tokens per scenario, "
           f"max ~{max(spent)}; pasting every skill would start at ~{eager}"
           + (f"; budget {budget}" if budget else ""))
     print(f"{passed}/{len(scenarios)} passed "

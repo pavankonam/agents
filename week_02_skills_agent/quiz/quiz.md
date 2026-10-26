@@ -85,3 +85,23 @@ Answer: Yes. A script cannot be priced before it runs, so it runs, `ran_scripts`
 Verified: `Agent._run_script` appends to `ran` before calling `_over_budget("script", ...)`; `test_script_output_past_the_limit_is_withheld_but_run_is_recorded` asserts the error, that `HX-40217-C` is absent and the `ran_scripts` entry. **PASS**
 
 Day 4 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q13 still PASS. The system prompt and tool schemas did not change today (budget refusals are tool messages), so Q1, Q9 and Q10 hold as written; `SkillLibrary.catalog()` now builds its rows with the new `catalog_entry`, and `test_catalog_has_descriptions_but_no_bodies` still passes.
+
+## Day 5 (2026-10-26)
+
+**Q18. A skill's description is just `Helps with stuff.` Is it rejected, and what does the linter say?**
+Answer: It is not rejected: discovery only rejects hard spec errors, and lint issues are warnings (D28). `lint_description` reports three issues: `R1-short` (3 words, at least 12), `R2-no-trigger` (no "Use when ..." clause) and `R3-vague` (`helps with, stuff`). `python3 -m skills_agent.routing` exits 1 because there are issues; with the shipped skills it reports 0 issues and exits 0.
+Verified: ran `lint_description("x", "Helps with stuff.")` by hand today and got exactly those three codes; `test_cli_exit_codes_and_json` checks exit 1 and the codes in `--json`, `test_shipped_skills_lint_clean_and_far_apart` checks the shipped set. **PASS**
+
+**Q19. On the NASA near miss the model loads `team-glossary` and then answers correctly. Does the scenario pass, and what changes in the routing table?**
+Answer: It fails, because the loaded set must equal the expected set (empty), even though the answer text is right. In the table `team-glossary` gets one false positive: with the other scenarios perfect that is tp 3, fp 1, fn 0, precision 0.75, recall 1.00, and the abstain line becomes 3/4. The quiz exits 1.
+Verified: `skills_ok` in `quiz_model.run` compares sorted lists; `routing_metrics` counts `got - want` as fp; `test_misrouting_model_lowers_precision` asserts the FAIL line, the row `team-glossary 3 1 0 0.75 1.00` and `without a skill 3/4`. **PASS**
+
+**Q20. Why is "(near miss)" printed in the report but not part of the question?**
+Answer: The label would tell the model not to load a skill, so the near miss would test nothing. Near misses are listed in a separate `NEAR_MISS` set; `label()` adds the prefix only for printing and for `--only` matching, and the agent gets the plain question (D30).
+Verified: `Agent(...).run(question)` uses the raw tuple entry; `test_quiz_has_near_misses_and_a_two_skill_task` asserts no question contains "near miss" and that each one shares a content word with some description (`convert`, `acronym`, `git`/`commit`, checked by hand today); `test_only_near_miss_filter` runs 3/3. **PASS**
+
+**Q21. The two skill task loads only `team-glossary` and answers `Blue Heron Expansion`. What does the quiz report?**
+Answer: FAIL. The loaded set misses `unit-converter`, and the answer lacks the second expected part `8.05` (a tuple expected means every part must appear). In the metrics `unit-converter` gets a false negative; on that run alone its precision is `n/a` (never loaded) and recall 0.00, and exact routing is 0/1.
+Verified: `answer_ok = all(...)` over `parts(expected)`; ran `routing_metrics([(["team-glossary","unit-converter"],["team-glossary"])])` by hand today (unit-converter precision None, recall 0.0, exact 0); `test_two_skill_task_fails_if_one_part_is_missing` and `test_unused_skill_has_undefined_ratios`. **PASS**
+
+Day 5 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q17 still PASS. No agent, prompt, tool or skill file changed today (routing.py and the quiz are outside the loop), so Q1, Q9 and Q10 hold as written and the Q15 numbers are unchanged (re-ran `python3 -m skills_agent.budget`: 919, 1,155, 2,100, 1,316). The day 1 to 4 quiz tests that read `expected` were updated to accept the new tuple form and still pass.

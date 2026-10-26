@@ -31,9 +31,10 @@ def test_every_expected_skill_exists_and_answer_is_only_in_body():
         for f in files:
             skill, _, path = f.partition("/")
             assert skill in skills and path in list_resources(lib.get(skill))
-        if skills and expected not in ("fix",) and not expected[0].isdigit():
-            # glossary answers must not leak into level 1, or the check proves nothing
-            assert expected.lower() not in catalog
+        for part in quiz.parts(expected):
+            if skills and part != "fix" and not part[0].isdigit():
+                # glossary answers must not leak into level 1, or the check proves nothing
+                assert part.lower() not in catalog
 
 
 def test_level3_answer_is_only_in_the_file():
@@ -43,8 +44,9 @@ def test_level3_answer_is_only_in_the_file():
     for question, skills, files, scripts, expected in quiz.SCENARIOS:
         if files:
             bodies = " ".join(lib.get(s).body for s in skills).lower()
-            assert expected.lower() not in bodies
-            assert expected.lower() not in lib.catalog().lower()
+            for part in quiz.parts(expected):
+                assert part.lower() not in bodies
+                assert part.lower() not in lib.catalog().lower()
 
 
 def test_script_answer_is_only_in_the_script_output():
@@ -57,8 +59,9 @@ def test_script_answer_is_only_in_the_script_output():
             seen += 1
             skill, _, path = target.partition("/")
             assert skill in skills and path in list_scripts(lib.get(skill))
-            assert expected not in lib.get(skill).body and expected not in lib.catalog()
-            assert expected not in question
+            for part in quiz.parts(expected):
+                assert part not in lib.get(skill).body and part not in lib.catalog()
+                assert part not in question
     assert seen >= 1
 
 
