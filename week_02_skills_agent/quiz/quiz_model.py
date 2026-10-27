@@ -22,6 +22,9 @@ lints the skill descriptions (routing.py, D28 to D30).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import json
 import sys
 import time
 from pathlib import Path
@@ -35,6 +38,7 @@ from skills_agent import (  # noqa: E402
 )
 from skills_agent.routing import format_metrics, lint_library, routing_metrics  # noqa: E402
 from skills_agent.llm import DEFAULT_MODEL  # noqa: E402
+from skills_agent import cli  # noqa: E402
 
 SKILLS_DIR = ROOT / "skills"
 
@@ -109,6 +113,44 @@ def script_output_contains(result, expected) -> bool:
                for m in result.messages)
 
 
+CLI_QUESTION = SCENARIOS[0]  # the BHX scenario, run once more through the CLI (D34)
+
+
+def _cli(argv: list[str], client=None) -> tuple[int, dict | None]:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
+        code = cli.main(argv + ["--skills-dir", str(SKILLS_DIR), "--json"], client=client)
+    try:
+        return code, json.loads(buf.getvalue())
+    except json.JSONDecodeError:
+        return code, None
+
+
+def cli_checks(fake: bool, model: str | None) -> list[tuple[str, bool]]:
+    """The CLI must give the same answers as the library, with the documented exit codes."""
+    names = SkillLibrary.discover(SKILLS_DIR).names()
+    out = []
+    code, data = _cli(["list"])
+    out.append(("list --json shows every valid skill, exit 0",
+                code == 0 and data is not None and [s["name"] for s in data["skills"]] == names))
+    code, data = _cli(["validate"])
+    out.append(("validate exits 1 with broken_skill as the only error",
+                code == 1 and data is not None and len(data["errors"]) == 1
+                and data["errors"][0].startswith("broken_skill")))
+    code, data = _cli(["inspect", "ticket-checksum"])
+    out.append(("inspect ticket-checksum lists its runnable script",
+                code == 0 and data is not None
+                and data["scripts"] == ["scripts/check_letter.py"]))
+    question, skills, files, scripts, expected = CLI_QUESTION
+    client = FakeClient(fake_script(skills, files, scripts, expected)) if fake else None
+    code, data = _cli(["run"] + (["--model", model] if model and not fake else []) + [question],
+                      client=client)
+    out.append((f"run --json {question!r} loads {skills} and answers",
+                code == 0 and data is not None and data["loaded_skills"] == skills
+                and all(p.lower() in data["answer"].lower() for p in parts(expected))))
+    return out
+
+
 def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama,
         budget: int | None = None) -> int:
     if not fake:
@@ -162,7 +204,12 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
           + (f"; budget {budget}" if budget else ""))
     print(f"{passed}/{len(scenarios)} passed "
           f"({'fake model' if fake else model or DEFAULT_MODEL})")
-    return 0 if passed == len(scenarios) else 1
+    checks = cli_checks(fake, model)
+    for name, ok in checks:
+        print(f"[{'PASS' if ok else 'FAIL'}] cli: {name}")
+    cli_passed = sum(ok for _, ok in checks)
+    print(f"cli checks: {cli_passed}/{len(checks)} passed")
+    return 0 if passed == len(scenarios) and cli_passed == len(checks) else 1
 
 
 if __name__ == "__main__":

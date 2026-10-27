@@ -105,3 +105,23 @@ Answer: FAIL. The loaded set misses `unit-converter`, and the answer lacks the s
 Verified: `answer_ok = all(...)` over `parts(expected)`; ran `routing_metrics([(["team-glossary","unit-converter"],["team-glossary"])])` by hand today (unit-converter precision None, recall 0.0, exact 0); `test_two_skill_task_fails_if_one_part_is_missing` and `test_unused_skill_has_undefined_ratios`. **PASS**
 
 Day 5 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q17 still PASS. No agent, prompt, tool or skill file changed today (routing.py and the quiz are outside the loop), so Q1, Q9 and Q10 hold as written and the Q15 numbers are unchanged (re-ran `python3 -m skills_agent.budget`: 919, 1,155, 2,100, 1,316). The day 1 to 4 quiz tests that read `expected` were updated to accept the new tuple form and still pass.
+
+## Day 6 (2026-10-27)
+
+**Q22. What do `python3 -m skills_agent validate` and `validate --strict` return on the shipped skills, and why?**
+Answer: Both exit 1. `broken_skill` is rejected (underscore in the name), and `validate` fails on any rejected skill; the summary reads `5 valid, 1 errors, 0 warnings, 0 lint issues: FAIL`. `--strict` would also fail on frontmatter warnings or lint issues, but the shipped skills have none, so it fails for the same single reason. `list` on the same folder exits 0, because it is a view, not a check (D32).
+Verified: ran both today (exit 1, and `strict exit 1`); `cmd_validate` sets `failed = bool(lib.rejected) or (args.strict and bool(warnings or lint))`; tests `test_validate_fails_on_rejected_skill` and `test_validate_clean_root_ok_and_strict_fails_on_lint` (a `Helps with stuff.` skill is exit 0 normally, exit 1 with `--strict`). **PASS**
+
+**Q23. Ollama is not running and everything else is fine. What does `doctor` print and return? And with `--offline`?**
+Answer: Six checks are `OK` except `rejected skills`, which is `WARN` (broken_skill), and `ollama` is `FAIL` with `Ollama is not reachable at http://localhost:11434 ... Start it with ollama serve`; the summary is `doctor: FAIL` and the exit code is 4, because Ollama is the only failing check. With `--offline` the Ollama check becomes `WARN skipped` and the exit code is 0 (D33).
+Verified: ran `doctor` on the Mac shell today with no Ollama listening (exit 4, exactly that output) and `doctor --offline` (exit 0); `cmd_doctor` returns `EXIT_OLLAMA` when `failing == {"ollama"}`; `test_doctor_ollama_only_failure_is_exit_4` also covers a model that is not pulled (`ollama pull llama3.2`). **PASS**
+
+**Q24. Two `--skills-dir` roots both contain `team-glossary`. Which copy does the agent use, and is anything reported?**
+Answer: The copy in the first root given. The second is added to the rejected list as `duplicate skill name 'team-glossary', kept <first path>`, so `list` shows it under rejected (still exit 0) and `validate` would exit 1. A root that does not exist is also reported as rejected (`skills root does not exist`), and `doctor` marks it FAIL.
+Verified: ran `list --skills-dir <tmp copy> --skills-dir skills` today (`5 skills, 2 rejected`, the duplicate line names the tmp copy as kept); `SkillLibrary.discover` keeps the first (D11); `test_multiple_roots_first_wins_and_missing_root_reported` and `test_doctor_missing_root_or_old_python_is_exit_1`. **PASS**
+
+**Q25. What happens with `python3 -m skills_agent list my files`?**
+Answer: `list` is a command name, so the argv is not rewritten to `run`; argparse rejects the extra words with `unrecognized arguments: my files` and the exit code is 2. To ask the agent a task that starts with a command word, write `run list my files`. Any other first word (for example `"What does BHX stand for?"`) is treated as `run` (D31).
+Verified: ran it today (usage line, `error: unrecognized arguments: my files`, exit 2); `normalize` only prepends `run` when `argv[0]` is not in `COMMANDS` or help; `test_short_form_still_runs_and_step_limit_exit` asserts `normalize(["list"]) == ["list"]` and `normalize(["What is BHX?"]) == ["run", "What is BHX?"]`. **PASS**
+
+Day 6 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q21 still PASS. The agent loop, prompt, tools and skills did not change (the CLI wraps `Agent` and `SkillLibrary`), so Q1, Q9, Q10 hold and the Q15 numbers are unchanged. The day 4 test `test_main_budget_flag_validation` now goes through `cli.main` and still gets exit 2 for `--budget`, `--budget abc task`, `--budget 0 task` and `--budget 500` without a task. `quiz_model.py --fake` adds 4 CLI checks, 4/4 PASS.

@@ -1,9 +1,14 @@
 # Flow: Skills Agent
 
-Status: **Day 5**. Every box exists in the code. The dashed arrow is the per kind meter that ends up in `AgentResult.context`. The bottom part is the routing eval, which runs outside the agent loop.
+Status: **Day 6**. Every box exists in the code. The dashed arrow is the per kind meter that ends up in `AgentResult.context`. The bottom part is the routing eval, which runs outside the agent loop. The top part is the CLI (`cli.py`), the entry point people use.
 
 ```mermaid
 flowchart TD
+    CLI[python3 -m skills_agent<br/>cli.py: list, validate, inspect,<br/>run, doctor; --json, --skills-dir ...] -->|roots in order,<br/>first name wins| DS
+    CLI -->|run TASK| U
+    CLI -->|doctor| DR{checks: python, roots,<br/>valid skills, rejected warn,<br/>lint warn, sh, Ollama /api/tags}
+    DR --> EX[exit codes 0 ok, 1 check,<br/>2 usage, 3 step limit,<br/>4 Ollama, 5 not found]
+    R -->|run: text or --json| EX
     D[(skills/ folders<br/>each with SKILL.md)] --> DS[SkillLibrary.discover<br/>skills.py]
     DS --> PF[parse_frontmatter<br/>YAML subset, no PyYAML]
     PF --> V{validate<br/>name rules, folder match,<br/>length limits}
@@ -50,6 +55,7 @@ flowchart TD
     R -->|expected vs loaded_skills| RM[routing_metrics<br/>per skill tp, fp, fn,<br/>precision, recall,<br/>exact, abstain]
     RM --> QR[quiz report]
     LN --> QR
+    CLI -.->|4 cli checks in process| QR
 ```
 
 ## How it works
@@ -61,5 +67,6 @@ flowchart TD
 5. **Scripts.** If a skill's frontmatter says `allowed-tools: run_skill_script` (or `run_skill_script(scripts/x.py)` for one script), the model also gets `run_skill_script(skill, script, args)`. It only works after `load_skill`. The script must be a `.py` or `.sh` file in the skill's `scripts/` folder, pass the same path checks as level 3, and be granted by `allowed-tools`. It runs with no shell (args are a list of strings), the skill folder as working directory, no stdin, a minimal environment and a 10 second timeout that kills the whole process group. Up to 8 KB of stdout and stderr come back in `<script_result exit_code=...>`. Every run is recorded in `AgentResult.ran_scripts`.
 6. **Context budget.** Every run has a `ContextBudget` (`budget.py`). It charges the system prompt, task and tool schemas, then every tool result, estimating tokens as characters / 4. With `budget_tokens` set, a skill body, file or script output that would push the run past the limit is replaced by `error: context budget ...`; a refused skill is not marked loaded. The per kind totals end up in `AgentResult.context`. `python3 -m skills_agent.budget` prints the cost of each level and compares it with pasting every skill into the prompt.
 7. **Routing eval.** `routing.py` lints every description (too short, no "Use when" clause, vague words, first person, or too similar to another skill) because the description is all the model sees at level 1. `quiz/quiz_model.py` runs skill tasks, a two skill task and near misses (tasks that share words with a description but need no skill), then compares each run's `loaded_skills` with the expected set and prints per skill precision and recall, exact routing and how many no-skill runs stayed without a skill. `python3 -m skills_agent.routing` prints the lint report alone.
-8. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
-9. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.
+8. **CLI.** `python3 -m skills_agent COMMAND` (`cli.py`). `list` shows valid skills with file and script counts plus the rejected list; `validate` exits 1 on any rejected skill (and with `--strict` on warnings or lint issues); `inspect NAME` shows the frontmatter, files, runnable scripts and token cost of one skill (`--body` adds the instructions); `run TASK` is the agent with `--budget`, `--model` and `--max-steps`; `doctor` checks Python, the skills roots, valid and rejected skills, lint, `/bin/sh` and whether Ollama is up with the model pulled. Every command takes `--json` and one or more `--skills-dir` (first root wins on a name clash). A bare task (`python3 -m skills_agent "task"`) still means `run`. Exit codes: 0 ok, 1 check failed, 2 usage, 3 step limit, 4 Ollama, 5 skill not found.
+9. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
+10. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.

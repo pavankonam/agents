@@ -38,7 +38,7 @@ A developer who wants a local agent that can be taught new procedures by droppin
 * [x] **Day 3 (Sat 10/24):** Skill scripts: `run_skill_script(skill, script, args)` runs files from `scripts/` with `subprocess` (no shell, timeout, output cap), gated by the skill's `allowed-tools`.
 * [x] **Day 4 (Sun 10/25):** Context budget: token estimates per level, a report comparing progressive disclosure with "paste every skill into the prompt", and a per run budget that refuses loads past a limit.
 * [x] **Day 5 (Mon 10/26):** Routing eval: more scenarios including near misses and two skill tasks, per skill precision and recall in `quiz_model.py`, a description linter that flags vague descriptions.
-* [ ] **Day 6 (Tue 10/27):** CLI: `list`, `validate`, `inspect`, `run`, `doctor`, with `--json`, exit codes and `--skills-dir` (multiple roots).
+* [x] **Day 6 (Tue 10/27):** CLI: `list`, `validate`, `inspect`, `run`, `doctor`, with `--json`, exit codes and `--skills-dir` (multiple roots).
 * [ ] **Day 7 (Wed 10/28):** Close out: real model results table, README demo, retro in decision.md, project closed in state.json.
 
 ## 6. Success criteria

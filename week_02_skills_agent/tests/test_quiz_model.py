@@ -83,3 +83,20 @@ def test_fake_run_reports_context(capsys):
 def test_tight_budget_makes_skill_scenarios_fail(capsys):
     assert quiz.run(fake=True, model=None, only="BHX", budget=50) == 1
     assert "budget refused: load_skill team-glossary" in capsys.readouterr().out
+
+
+def test_cli_checks_pass_with_fake_model(capsys):
+    assert quiz.run(fake=True, model=None, only="ORCA") == 0
+    out = capsys.readouterr().out
+    assert "cli checks: 4/4 passed" in out and "[PASS] cli: validate exits 1" in out
+
+
+def test_cli_check_fails_when_run_misroutes(monkeypatch):
+    """A model that loads the wrong skill through the CLI must fail the run check."""
+    from skills_agent import LOAD_SKILL, LLMResponse, ToolCall
+    monkeypatch.setattr(quiz, "fake_script", lambda *a: [
+        LLMResponse(tool_calls=[ToolCall(LOAD_SKILL, {"name": "unit-converter"})]),
+        LLMResponse(content="Blue Heron Expansion")])
+    results = dict(quiz.cli_checks(fake=True, model=None))
+    assert sum(results.values()) == 3
+    assert not any(ok for name, ok in results.items() if name.startswith("run --json"))
