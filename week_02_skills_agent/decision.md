@@ -193,3 +193,34 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Decision:** After the scenarios, `quiz_model.py` runs four CLI checks in process with `--json`: `list` shows every valid skill and exits 0, `validate` exits 1 with `broken_skill` as the only error, `inspect ticket-checksum` lists its runnable script, and `run` on the BHX scenario (with the same fake or Ollama model) loads exactly `team-glossary` and answers with `Blue Heron Expansion`. The quiz exits 1 if any check fails.
 **Why:** The CLI is now the way people run the agent, so the quiz should prove that path gives the same routing as calling `Agent` directly, including on the real model. Running in process with redirected output keeps it fast and lets the fake client be injected.
 **Alternatives:** Subprocess calls (cannot inject the fake model), a separate CLI quiz (one more command to remember).
+
+## D35. `quiz_model.py --json` saves a report and `--table` turns reports into a results table (2026-10-28)
+
+**Decision:** `run(..., json_path=...)` writes a JSON report: model, date, budget, `--only`, passed count, one row per scenario (`kind`, `ok`, `secs`, `tokens`, expected and loaded skills, read files, ran scripts, stop reason, answer clipped to 500 chars), the routing metrics dict and the CLI checks. `kind()` groups scenarios as level 2, level 3, script, two skills, no skill or near miss. `--table REPORT...` prints a Markdown table, one row per report, with a score per kind, exact routing, CLI checks, average seconds and tokens. A bad or missing report exits 2.
+**Why:** The PRD asks for a real model results table, and the week 01 retro said the real run never happened because the automation cannot reach Ollama on the Mac. The fix is to make the real run a single command whose output is ready to paste: Pavan runs `quiz_model.py --json results/qwen3_4b.json` once, then `--table results/*.json`. Grouping by kind shows which disclosure level a small model struggles with, which one total score hides. Saving the clipped answer makes a failure explainable later without rerunning the model.
+**Alternatives:** Print only the table (the details of a failure would be lost), CSV (nested routing metrics do not fit), write the README automatically (the automation should not edit docs from a run it did not watch).
+
+## D36. Commit the fake baseline report, leave the real model row open (2026-10-28)
+
+**Decision:** `results/fake.json` (12/12, 4/4 CLI, exact routing 12/12) is committed. The README results table has the fake row from that file and a `qwen3:4b` row marked "not run yet" with the two commands to fill it.
+**Why:** The daily run happens in a Linux VM on the Mac that cannot reach the Mac's own `localhost:11434` (`doctor` shows exit 4 there), so no real number can be produced honestly by the automation. A committed baseline lets `--table` compare a real run against it right away. Inventing or estimating a qwen3:4b score would break the rule that every quiz answer is verified.
+**Alternatives:** Skip the results section until a real run exists (the PRD day 7 milestone would be empty), point the automation at a remote Ollama (needs a server, out of scope for a free local project).
+
+## Retro (week 02, 2026-10-28)
+
+**What went well**
+* Progressive disclosure gave a clean shape for the whole week: each day added one level or one meter (catalog, body, files, scripts, budget, routing, CLI) without changing the earlier ones, and the agent loop barely moved after day 3.
+* Making every quiz answer depend on text that exists only at the expected level (glossary words only in the body, `Crimson` only in the reference file, `HX-40217-C` only in the script output) turned "did it load the skill" into a check that cannot pass by luck. Tests enforce that the answers never leak into level 1.
+* The context budget numbers were surprising and useful: with five small skills progressive disclosure saves only 12% with one skill used and loses when every skill is needed, because tool schemas are fixed overhead. The projection shows when it starts paying off.
+* Fake model tests again made every day verifiable: 184 tests in under 2 seconds.
+
+**What did not**
+* The real model run is still open for the second week in a row. The automation cannot reach Ollama, and the baseline was planned for day 7 again instead of day 2 as the week 01 retro said. Today's `--json` and `--table` make it one command, but the number itself is missing.
+* The frontmatter parser is a hand written subset of YAML. It covers every shipped skill and the spec fields, but a skill using flow lists or anchors will be rejected rather than parsed.
+* The overlap lint uses word sets, so two descriptions that mean the same with different words score low. It catches copy paste, not paraphrase.
+* `run_skill_script` is a guard rail, not a sandbox: a permitted script can read and write anything the user can.
+
+**Next time**
+* Week 03 day 1: put a `--json` report in quiz_model from the start and ask Pavan for one real run during the week, so the day 7 table has data.
+* Keep a shared `llm.py` and quiz report helper instead of copying them per week.
+* Ideas left for a later week: skills that declare dependencies on other skills, a real sandbox (container or seccomp) for scripts, embedding based overlap and routing, letting the model unload a skill to free context.

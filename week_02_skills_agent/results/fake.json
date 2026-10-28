@@ -1,0 +1,271 @@
+{
+  "model": "fake",
+  "date": "2026-10-28",
+  "budget": null,
+  "only": null,
+  "passed": 12,
+  "scenarios": [
+    {
+      "question": "What does BHX stand for on our team?",
+      "kind": "level 2",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1088,
+      "expected_skills": [
+        "team-glossary"
+      ],
+      "loaded_skills": [
+        "team-glossary"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: Blue Heron Expansion"
+    },
+    {
+      "question": "Someone mentioned ORCA in a meeting. What is it?",
+      "kind": "level 2",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1091,
+      "expected_skills": [
+        "team-glossary"
+      ],
+      "loaded_skills": [
+        "team-glossary"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: Change Approval"
+    },
+    {
+      "question": "Convert 26.2 miles to km.",
+      "kind": "level 2",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1027,
+      "expected_skills": [
+        "unit-converter"
+      ],
+      "loaded_skills": [
+        "unit-converter"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: 42.16"
+    },
+    {
+      "question": "Convert 212 Fahrenheit to Celsius.",
+      "kind": "level 2",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1029,
+      "expected_skills": [
+        "unit-converter"
+      ],
+      "loaded_skills": [
+        "unit-converter"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: 100.00"
+    },
+    {
+      "question": "Write a commit message for: fixed a crash when the config file is empty.",
+      "kind": "level 2",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1083,
+      "expected_skills": [
+        "commit-message"
+      ],
+      "loaded_skills": [
+        "commit-message"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: fix"
+    },
+    {
+      "question": "Checkout has been down for 40% of users for ten minutes. How severe is this incident and what colour code do we use?",
+      "kind": "level 3",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1304,
+      "expected_skills": [
+        "incident-severity"
+      ],
+      "loaded_skills": [
+        "incident-severity"
+      ],
+      "read_files": [
+        "incident-severity/references/severity-matrix.md"
+      ],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: Crimson"
+    },
+    {
+      "question": "What is the full ticket ID, with its check letter, for ticket HX-40217?",
+      "kind": "script",
+      "ok": true,
+      "secs": 0.02,
+      "tokens": 1136,
+      "expected_skills": [
+        "ticket-checksum"
+      ],
+      "loaded_skills": [
+        "ticket-checksum"
+      ],
+      "read_files": [],
+      "ran_scripts": [
+        "ticket-checksum/scripts/check_letter.py exit=0"
+      ],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: HX-40217-C"
+    },
+    {
+      "question": "Reply with exactly the word: ready",
+      "kind": "no skill",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 928,
+      "expected_skills": [],
+      "loaded_skills": [],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: ready"
+    },
+    {
+      "question": "What does BHX stand for, and how many km is 5 miles?",
+      "kind": "two skills",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 1193,
+      "expected_skills": [
+        "team-glossary",
+        "unit-converter"
+      ],
+      "loaded_skills": [
+        "team-glossary",
+        "unit-converter"
+      ],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: Blue Heron Expansion; 8.05"
+    },
+    {
+      "question": "Convert this sentence to the passive voice: the team fixed the bug.",
+      "kind": "near miss",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 936,
+      "expected_skills": [],
+      "loaded_skills": [],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: was fixed"
+    },
+    {
+      "question": "What does the acronym NASA stand for?",
+      "kind": "near miss",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 929,
+      "expected_skills": [],
+      "loaded_skills": [],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: Aeronautics"
+    },
+    {
+      "question": "In one sentence, what is a git commit?",
+      "kind": "near miss",
+      "ok": true,
+      "secs": 0.0,
+      "tokens": 929,
+      "expected_skills": [],
+      "loaded_skills": [],
+      "read_files": [],
+      "ran_scripts": [],
+      "stopped_reason": "final_answer",
+      "answer": "Answer: snapshot"
+    }
+  ],
+  "routing": {
+    "per_skill": {
+      "commit-message": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "incident-severity": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "team-glossary": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "ticket-checksum": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      },
+      "unit-converter": {
+        "tp": 3,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0
+      }
+    },
+    "runs": 12,
+    "exact": 12,
+    "abstain": {
+      "correct": 4,
+      "of": 4
+    },
+    "micro": {
+      "precision": 1.0,
+      "recall": 1.0
+    }
+  },
+  "lint_issues": 0,
+  "cli": [
+    {
+      "name": "list --json shows every valid skill, exit 0",
+      "ok": true
+    },
+    {
+      "name": "validate exits 1 with broken_skill as the only error",
+      "ok": true
+    },
+    {
+      "name": "inspect ticket-checksum lists its runnable script",
+      "ok": true
+    },
+    {
+      "name": "run --json 'What does BHX stand for on our team?' loads ['team-glossary'] and answers",
+      "ok": true
+    }
+  ]
+}

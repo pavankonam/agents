@@ -19,4 +19,4 @@ The daily process is described in [PLAYBOOK.md](PLAYBOOK.md) and the history is 
 | Week | Project | Topic | Status |
 | --- | --- | --- | --- |
 | 01 | [Guarded Tool Agent](week_01_guarded_tool_agent/) | Tool calling agent with permission policies, approvals, audit logs and a prompt injection guard | Done (2026-10-15 to 2026-10-21) |
-| 02 | [Skills Agent](week_02_skills_agent/) | Agent Skills (`SKILL.md`) with progressive disclosure: catalog, on demand loading, resources and scripts, context budget, routing eval | In progress (day 6 of 7, started 2026-10-22) |
+| 02 | [Skills Agent](week_02_skills_agent/) | Agent Skills (`SKILL.md`) with progressive disclosure: catalog, on demand loading, resources and scripts, context budget, routing eval | Done (2026-10-22 to 2026-10-28) |

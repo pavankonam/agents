@@ -125,3 +125,23 @@ Answer: `list` is a command name, so the argv is not rewritten to `run`; argpars
 Verified: ran it today (usage line, `error: unrecognized arguments: my files`, exit 2); `normalize` only prepends `run` when `argv[0]` is not in `COMMANDS` or help; `test_short_form_still_runs_and_step_limit_exit` asserts `normalize(["list"]) == ["list"]` and `normalize(["What is BHX?"]) == ["run", "What is BHX?"]`. **PASS**
 
 Day 6 result: 4/4 PASS. Earlier questions rechecked against today's code: Q1 to Q21 still PASS. The agent loop, prompt, tools and skills did not change (the CLI wraps `Agent` and `SkillLibrary`), so Q1, Q9, Q10 hold and the Q15 numbers are unchanged. The day 4 test `test_main_budget_flag_validation` now goes through `cli.main` and still gets exit 2 for `--budget`, `--budget abc task`, `--budget 0 task` and `--budget 500` without a task. `quiz_model.py --fake` adds 4 CLI checks, 4/4 PASS.
+
+## Day 7 (2026-10-28)
+
+**Q26. How are the 12 scenarios grouped in the results table, and what does the fake row show?**
+Answer: `kind()` checks in order: near miss (question in `NEAR_MISS`), no skill (no expected skill), two skills, script, level 3, else level 2. That gives level 2: 5, level 3: 1, script: 1, two skills: 1, no skill: 1 (`ready`), near miss: 3. The fake row from `results/fake.json` is `12/12` with every group full, exact routing 12/12, CLI 4/4 and about 1,056 tokens per scenario (D35).
+Verified: ran `--fake --json results/fake.json` then `--table results/fake.json` today (row `| fake | 2026-10-28 | 12/12 | 5/5 | 1/1 | 1/1 | 1/1 | 1/1 | 3/3 | 12/12 | 4/4 | 0.0 | 1056 |`); `test_kind_groups_every_scenario` and `test_json_report_and_results_table`. **PASS**
+
+**Q27. Ollama is down and you run `quiz_model.py --json results/qwen3_4b.json`. Is a report written?**
+Answer: No. The preflight runs first and returns 4 with `PROBLEM: Ollama is not reachable ...`, before any scenario, so no file is written and an old report at that path stays as it was. A report only exists for a run that actually reached the model.
+Verified: ran it on the Mac shell today with no Ollama listening (exit 4, `/tmp/q.json` not created); `write_report` is only called at the end of `run`, after the preflight `return 4`. **PASS**
+
+**Q28. A real model answers the BHX question without loading any skill. What does the report record?**
+Answer: That scenario row has `ok: false`, `loaded_skills: []` and the model's answer text; `passed` drops by one, and in `routing.per_skill` `team-glossary` gets `fn: 1`, so its recall falls. `--table` shows it under level 2. The quiz exits 1.
+Verified: `test_failed_scenario_is_recorded_in_report` swaps `OllamaClient` for a model that replies "No idea." (exit 1, `passed` 0, `fn` 1, answer saved). **PASS**
+
+**Q29. What does `--table` do with a missing or broken report file, or none?**
+Answer: Prints `PROBLEM: cannot read report <path>: ...` and exits 2 for a missing file or invalid JSON; with no readable report it prints `No report files given` and exits 2. Nothing is printed as a partial table.
+Verified: ran `--table nope.json` today (exit 2 with that message); `test_table_bad_or_missing_report` covers bad JSON, a missing file and an empty list. **PASS**
+
+Day 7 result: 4/4 PASS. Earlier questions rechecked: Q1 to Q25 still PASS. The agent loop, prompt, tools, skills and CLI did not change today (only `quiz_model.py` and its tests), so Q1, Q9, Q10 hold and the Q15 numbers are unchanged (re-ran `python3 -m skills_agent.budget`: 919, 1,155, 2,100, 1,316). `doctor --offline` re-run today: OK with two warnings (broken_skill, Ollama skipped), exit 0. 184 tests pass.

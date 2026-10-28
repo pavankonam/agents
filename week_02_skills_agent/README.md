@@ -2,7 +2,7 @@
 
 A small agent that uses **Agent Skills** (folders with a `SKILL.md` file) on a **free local model through Ollama**. The model only sees each skill's name and description, and loads the full instructions when a task needs them (progressive disclosure). See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 6 of 7. Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), a context budget that meters every run and refuses disclosures past a limit, a report comparing progressive disclosure with pasting every skill, a routing eval (description linter, near miss and two skill scenarios, per skill precision and recall), a CLI (`list`, `validate`, `inspect`, `run`, `doctor`, with `--json`, exit codes and several `--skills-dir` roots), five example skills, 180 tests.
+**Status:** Done (2026-10-22 to 2026-10-28). Skill parser and validator, discovery with rejected list, catalog in the system prompt (level 1), `load_skill` tool (level 2), `read_skill_file` for files bundled with a skill (level 3, confined to the skill folder), `run_skill_script` for scripts a skill permits in `allowed-tools` (no shell, timeout, output cap), a context budget that meters every run and refuses disclosures past a limit, a report comparing progressive disclosure with pasting every skill, a routing eval (description linter, near miss and two skill scenarios, per skill precision and recall), a CLI (`list`, `validate`, `inspect`, `run`, `doctor`), quiz reports saved as JSON and turned into a results table, five example skills, 184 tests. The retro is at the end of [decision.md](decision.md).
 
 ## Run it
 
@@ -131,6 +131,54 @@ description: What it does and when to use it, in one or two sentences.
 # Instructions the model follows after loading the skill
 ```
 
+## Demo
+
+What a fresh checkout shows (output from the 2026-10-28 run, paths shortened):
+
+```text
+$ PYTHONPATH=src python3 -m skills_agent list
+commit-message     0 files  0 scripts  Writes git commit messages in the team's Conventional Commits style. U...
+incident-severity  1 files  0 scripts  Classify a production incident or outage into the team's severity leve...
+team-glossary      0 files  0 scripts  Definitions of the internal acronyms and code names used by the team (...
+ticket-checksum    1 files  1 scripts  Complete or validate a team ticket ID such as HX-40217 by computing it...
+unit-converter     0 files  0 scripts  Converts between metric and imperial units for length, weight and temp...
+5 skills, 1 rejected
+  rejected: broken_skill: name must be lowercase letters, digits and single hyphens, not starting or ending with a hyphen
+
+$ PYTHONPATH=src python3 -m skills_agent doctor --offline
+[OK  ] python: 3.10.12 (needs 3.10+)
+[OK  ] skills roots: .../week_02_skills_agent/skills
+[OK  ] valid skills: 5: commit-message, incident-severity, team-glossary, ticket-checksum, unit-converter
+[WARN] rejected skills: broken_skill: name must be lowercase letters, ...
+[OK  ] descriptions: lint clean
+[OK  ] script runners: python /usr/bin/python3; /bin/sh found
+[WARN] ollama: skipped (--offline)
+doctor: OK
+```
+
+With Ollama running, `python3 -m skills_agent "Checkout is down for 40% of users. How severe is this?"` should show `incident-severity` loaded and `references/severity-matrix.md` read on the first line, then an answer naming the colour code from that file.
+
+## Results
+
+`python3 quiz/quiz_model.py --fake --json results/fake.json` on 2026-10-28, then `--table results/fake.json`:
+
+| model | date | total | level 2 | level 3 | script | two skills | no skill | near miss | exact routing | cli | avg s | avg tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fake | 2026-10-28 | 12/12 | 5/5 | 1/1 | 1/1 | 1/1 | 1/1 | 3/3 | 12/12 | 4/4 | 0.0 | 1056 |
+| qwen3:4b | not run yet | | | | | | | | | | | |
+
+The fake model is scripted to route perfectly, so its row checks the harness: every skill, file and script is reachable, the answers really come from the disclosed text, and the CLI routes the same as the library. Average context was about 1,056 tokens per scenario against 1,316 for pasting every skill.
+
+Real model: the daily automation runs in a VM that cannot reach Ollama on the Mac, so the `qwen3:4b` row is open. On the Mac:
+
+```bash
+python3 quiz/quiz_model.py --json results/qwen3_4b.json
+python3 quiz/quiz_model.py --model llama3.2 --json results/llama3_2.json
+python3 quiz/quiz_model.py --table results/*.json      # paste the rows above
+```
+
+Each report keeps every scenario's loaded skills, files, scripts and answer, so a failure can be explained without rerunning. The scenarios most likely to trip a small model, untested so far: the near misses (loading `unit-converter` for "convert this sentence") and the two skill task (stopping after the first skill).
+
 ## Tests and quiz
 
 ```bash
@@ -140,6 +188,8 @@ python3 quiz/quiz_model.py                 # ask qwen3:4b; checks it loads the r
 python3 quiz/quiz_model.py --model llama3.2 --only BHX
 python3 quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
 python3 quiz/quiz_model.py --only "near miss"     # only the near miss scenarios
+python3 quiz/quiz_model.py --json results/x.json  # also save a JSON report
+python3 quiz/quiz_model.py --table results/*.json # Markdown results table from reports
 ```
 
 After the scenarios the quiz runs four CLI checks in process (`list`, `validate`, `inspect ticket-checksum`, and `run --json` on the BHX question with the same model) and fails if the CLI routes differently from the library.

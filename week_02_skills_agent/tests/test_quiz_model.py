@@ -100,3 +100,59 @@ def test_cli_check_fails_when_run_misroutes(monkeypatch):
     results = dict(quiz.cli_checks(fake=True, model=None))
     assert sum(results.values()) == 3
     assert not any(ok for name, ok in results.items() if name.startswith("run --json"))
+
+
+def test_json_report_and_results_table(tmp_path, capsys):
+    path = tmp_path / "r" / "fake.json"
+    assert quiz.run(fake=True, model=None, json_path=str(path)) == 0
+    import json
+    report = json.loads(path.read_text())
+    n = len(quiz.SCENARIOS)
+    assert report["model"] == "fake" and report["passed"] == n and len(report["scenarios"]) == n
+    assert report["routing"]["exact"] == n and all(c["ok"] for c in report["cli"])
+    kinds = {r["kind"] for r in report["scenarios"]}
+    assert kinds == set(quiz.KINDS)
+    capsys.readouterr()
+    assert quiz.table([str(path)]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0].startswith("| model | date | total | level 2 |")
+    assert out[2].startswith(f"| fake | {report['date']} | {n}/{n} | 5/5 | 1/1 | 1/1 | 1/1 | 1/1 | 3/3 |")
+
+
+def test_kind_groups_every_scenario():
+    counts = {}
+    for q, skills, files, scripts, _ in quiz.SCENARIOS:
+        k = quiz.kind(q, skills, files, scripts)
+        counts[k] = counts.get(k, 0) + 1
+    assert counts == {"level 2": 5, "level 3": 1, "script": 1, "two skills": 1,
+                      "no skill": 1, "near miss": 3}
+
+
+def test_table_bad_or_missing_report(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert quiz.table([str(bad)]) == 2
+    assert quiz.table([str(tmp_path / "missing.json")]) == 2
+    assert quiz.table([]) == 2
+
+
+def test_failed_scenario_is_recorded_in_report(tmp_path, monkeypatch):
+    """A real model that answers without loading a skill shows up as a FAIL row."""
+    from skills_agent import FakeClient, LLMResponse
+    import json
+
+    class Lazy(FakeClient):
+        def __init__(self, **kw):
+            super().__init__([LLMResponse(content="No idea.")])
+
+    monkeypatch.setattr(quiz, "OllamaClient", Lazy)
+    # keep the CLI checks away from a real Ollama that may be running on the machine
+    monkeypatch.setattr(quiz, "cli_checks", lambda fake, model: [("stub", True)])
+    path = tmp_path / "lazy.json"
+    code = quiz.run(fake=False, model="lazy", only="BHX stand for on our team",
+                    check=lambda m: (True, "ok"), json_path=str(path))
+    report = json.loads(path.read_text())
+    assert code == 1 and report["model"] == "lazy" and report["passed"] == 0
+    row = report["scenarios"][0]
+    assert row["ok"] is False and row["loaded_skills"] == [] and row["answer"] == "No idea."
+    assert report["routing"]["per_skill"]["team-glossary"]["fn"] == 1

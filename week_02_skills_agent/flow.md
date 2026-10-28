@@ -56,6 +56,8 @@ flowchart TD
     RM --> QR[quiz report]
     LN --> QR
     CLI -.->|4 cli checks in process| QR
+    QR -->|--json PATH| JR[(report JSON<br/>per scenario kind, ok, secs,<br/>tokens, loaded, answer,<br/>routing, cli)]
+    JR -->|--table a.json b.json| TB[Markdown results table<br/>one row per model]
 ```
 
 ## How it works
@@ -68,5 +70,6 @@ flowchart TD
 6. **Context budget.** Every run has a `ContextBudget` (`budget.py`). It charges the system prompt, task and tool schemas, then every tool result, estimating tokens as characters / 4. With `budget_tokens` set, a skill body, file or script output that would push the run past the limit is replaced by `error: context budget ...`; a refused skill is not marked loaded. The per kind totals end up in `AgentResult.context`. `python3 -m skills_agent.budget` prints the cost of each level and compares it with pasting every skill into the prompt.
 7. **Routing eval.** `routing.py` lints every description (too short, no "Use when" clause, vague words, first person, or too similar to another skill) because the description is all the model sees at level 1. `quiz/quiz_model.py` runs skill tasks, a two skill task and near misses (tasks that share words with a description but need no skill), then compares each run's `loaded_skills` with the expected set and prints per skill precision and recall, exact routing and how many no-skill runs stayed without a skill. `python3 -m skills_agent.routing` prints the lint report alone.
 8. **CLI.** `python3 -m skills_agent COMMAND` (`cli.py`). `list` shows valid skills with file and script counts plus the rejected list; `validate` exits 1 on any rejected skill (and with `--strict` on warnings or lint issues); `inspect NAME` shows the frontmatter, files, runnable scripts and token cost of one skill (`--body` adds the instructions); `run TASK` is the agent with `--budget`, `--model` and `--max-steps`; `doctor` checks Python, the skills roots, valid and rejected skills, lint, `/bin/sh` and whether Ollama is up with the model pulled. Every command takes `--json` and one or more `--skills-dir` (first root wins on a name clash). A bare task (`python3 -m skills_agent "task"`) still means `run`. Exit codes: 0 ok, 1 check failed, 2 usage, 3 step limit, 4 Ollama, 5 skill not found.
-9. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
-10. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.
+9. **Results.** `quiz_model.py --json PATH` also writes the run as JSON: model, date, every scenario with its kind (level 2, level 3, script, two skills, no skill, near miss), pass or fail, seconds, tokens, loaded skills, files, scripts and the first 500 chars of the answer, plus the routing metrics and the CLI checks. `--table` reads one or more saved reports and prints a Markdown table with one row per model, so a real model run can be pasted into the README next to the fake baseline in `results/fake.json`.
+10. **Answer.** The loop ends when the model replies without tool calls, or after `max_steps` (default 6).
+11. **Errors** (unknown skill, missing argument, unknown tool, file or script refused) go back to the model as tool messages starting with `error:`, so it can recover.

@@ -5,6 +5,8 @@
     python3 -B quiz/quiz_model.py --model llama3.2 --only BHX
     python3 -B quiz/quiz_model.py --fake --budget 1000   # see what a tight budget refuses
     python3 -B quiz/quiz_model.py --only "near miss"      # only the near miss scenarios
+    python3 -B quiz/quiz_model.py --json results/qwen3_4b.json   # save a report
+    python3 -B quiz/quiz_model.py --table results/*.json         # Markdown results table
 
 A scenario passes when the agent loaded exactly the expected skills (no extra
 ones), read exactly the expected skill files (level 3), ran exactly the expected
@@ -151,8 +153,66 @@ def cli_checks(fake: bool, model: str | None) -> list[tuple[str, bool]]:
     return out
 
 
+def kind(question: str, skills: list[str], files: list[str], scripts: list) -> str:
+    """Scenario group for the results table (D35)."""
+    if question in NEAR_MISS:
+        return "near miss"
+    if not skills:
+        return "no skill"
+    if len(skills) > 1:
+        return "two skills"
+    if scripts:
+        return "script"
+    if files:
+        return "level 3"
+    return "level 2"
+
+
+KINDS = ["level 2", "level 3", "script", "two skills", "no skill", "near miss"]
+
+
+def write_report(path: str | Path, report: dict) -> None:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+
+
+def results_table(reports: list[dict]) -> str:
+    """One Markdown row per saved report: score per scenario kind, routing, CLI, time."""
+    head = ["model", "date", "total"] + KINDS + ["exact routing", "cli", "avg s", "avg tokens"]
+    lines = ["| " + " | ".join(head) + " |", "|" + " --- |" * len(head)]
+    for r in reports:
+        sc = r["scenarios"]
+        cells = [r["model"], r["date"], f"{r['passed']}/{len(sc)}"]
+        for k in KINDS:
+            group = [x for x in sc if x["kind"] == k]
+            cells.append(f"{sum(x['ok'] for x in group)}/{len(group)}" if group else "-")
+        m = r["routing"]
+        cli_ok = sum(c["ok"] for c in r["cli"])
+        cells += [f"{m['exact']}/{m['runs']}", f"{cli_ok}/{len(r['cli'])}",
+                  f"{sum(x['secs'] for x in sc) / len(sc):.1f}",
+                  str(round(sum(x["tokens"] for x in sc) / len(sc)))]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def table(paths: list[str]) -> int:
+    reports = []
+    for p in paths:
+        try:
+            reports.append(json.loads(Path(p).read_text(encoding="utf-8")))
+        except (OSError, ValueError) as exc:
+            print(f"PROBLEM: cannot read report {p}: {exc}")
+            return 2
+    if not reports:
+        print("No report files given")
+        return 2
+    print(results_table(reports))
+    return 0
+
+
 def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama,
-        budget: int | None = None) -> int:
+        budget: int | None = None, json_path: str | None = None) -> int:
     if not fake:
         ok, msg = check(model or DEFAULT_MODEL)
         if not ok:
@@ -166,6 +226,7 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     passed = 0
     spent = []
     routes = []
+    rows = []
     for question, skills, files, scripts, expected in scenarios:
         llm = (FakeClient(fake_script(skills, files, scripts, expected)) if fake
                else OllamaClient(**({"model": model} if model else {})))
@@ -183,6 +244,11 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
               and result.stopped_reason == "final_answer")
         passed += ok
         spent.append(result.context["spent"])
+        rows.append({"question": question, "kind": kind(question, skills, files, scripts),
+                     "ok": bool(ok), "secs": round(secs, 2), "tokens": result.context["spent"],
+                     "expected_skills": skills, "loaded_skills": result.loaded_skills,
+                     "read_files": result.read_files, "ran_scripts": result.ran_scripts,
+                     "stopped_reason": result.stopped_reason, "answer": result.answer[:500]})
         print(f"[{'PASS' if ok else 'FAIL'}] {label(question)} ({secs:.1f}s, "
               f"~{result.context['spent']} tokens)")
         if result.context["refused"]:
@@ -193,7 +259,8 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
             print(f"    ran scripts {result.ran_scripts} (expected {want_runs})")
             print(f"    answer: {result.answer[:200]!r} (expected to contain {expected!r})")
     print("\nrouting (per skill, over these scenarios):")
-    print(format_metrics(routing_metrics(routes, lib.names())))
+    metrics = routing_metrics(routes, lib.names())
+    print(format_metrics(metrics))
     issues = lint_library(lib)
     print(f"description lint: {len(issues) or 'no'} issue{'s' * (len(issues) != 1)}")
     for issue in issues:
@@ -209,6 +276,13 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         print(f"[{'PASS' if ok else 'FAIL'}] cli: {name}")
     cli_passed = sum(ok for _, ok in checks)
     print(f"cli checks: {cli_passed}/{len(checks)} passed")
+    if json_path:
+        write_report(json_path, {
+            "model": "fake" if fake else model or DEFAULT_MODEL,
+            "date": time.strftime("%Y-%m-%d"), "budget": budget, "only": only,
+            "passed": passed, "scenarios": rows, "routing": metrics,
+            "lint_issues": len(issues), "cli": [{"name": n, "ok": o} for n, o in checks]})
+        print(f"report written to {json_path}")
     return 0 if passed == len(scenarios) and cli_passed == len(checks) else 1
 
 
@@ -218,5 +292,10 @@ if __name__ == "__main__":
     ap.add_argument("--model", help="Ollama model name, default qwen3:4b")
     ap.add_argument("--only", help="run only scenarios whose question contains this text")
     ap.add_argument("--budget", type=int, help="per run context budget in estimated tokens")
+    ap.add_argument("--json", dest="json_path", help="also write a JSON report to this file")
+    ap.add_argument("--table", nargs="+", metavar="REPORT",
+                    help="print a Markdown results table from saved reports and exit")
     a = ap.parse_args()
-    raise SystemExit(run(a.fake, a.model, a.only, budget=a.budget))
+    if a.table:
+        raise SystemExit(table(a.table))
+    raise SystemExit(run(a.fake, a.model, a.only, budget=a.budget, json_path=a.json_path))
