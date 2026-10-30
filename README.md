@@ -20,4 +20,4 @@ The daily process is described in [PLAYBOOK.md](PLAYBOOK.md) and the history is 
 | --- | --- | --- | --- |
 | 01 | [Guarded Tool Agent](week_01_guarded_tool_agent/) | Tool calling agent with permission policies, approvals, audit logs and a prompt injection guard | Done (2026-10-15 to 2026-10-21) |
 | 02 | [Skills Agent](week_02_skills_agent/) | Agent Skills (`SKILL.md`) with progressive disclosure: catalog, on demand loading, resources and scripts, context budget, routing eval | Done (2026-10-22 to 2026-10-28) |
-| 03 | [Agent Gym](week_03_agent_gym/) | OpenEnv shaped environments (reset, step, state) for tool using agents, scored by checking the final state; rubrics, failure taxonomy, replayable trajectories | In progress (day 1 of 7, started 2026-10-29) |
+| 03 | [Agent Gym](week_03_agent_gym/) | OpenEnv shaped environments (reset, step, state) for tool using agents, scored by checking the final state; rubrics, failure taxonomy, replayable trajectories | In progress (day 2 of 7, started 2026-10-29) |

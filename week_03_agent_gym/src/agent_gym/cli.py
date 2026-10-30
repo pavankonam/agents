@@ -1,4 +1,4 @@
-"""Day 1 CLI: `list` tasks and `run` one episode. The full CLI is the day 6 milestone."""
+"""CLI so far: `list` tasks and `run` one episode (with the reward breakdown). Full CLI is day 6."""
 
 from __future__ import annotations
 
@@ -23,7 +23,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--model", default=DEFAULT_MODEL)
     run.add_argument("--max-steps", type=int, default=20)
     run.add_argument("--json", action="store_true")
+    run.add_argument("--breakdown", action="store_true", help="print the rubric tree")
     return p
+
+
+def breakdown_lines(node: dict, indent: int = 0) -> list[str]:
+    """Render Episode.breakdown (RubricResult.to_dict) one node per line."""
+    w = f" x{node['weight']:g}" if "weight" in node else ""
+    out = [f"{'  ' * indent}{node['name']}{w}: {node['score']:.3f}"]
+    out += [f"{'  ' * (indent + 1)}- {d}" for d in node.get("detail", [])]
+    for c in node.get("children", []):
+        out += breakdown_lines(c, indent + 1)
+    return out
 
 
 def main(argv: list[str], client=None, check=check_ollama) -> int:
@@ -60,8 +71,12 @@ def main(argv: list[str], client=None, check=check_ollama) -> int:
         for s in ep.steps:
             print(f"{s.index:>2}. {'ok ' if s.ok else 'ERR'} {s.tool}({json.dumps(s.arguments)})"
                   f" -> {s.content[:120]}")
-        print(f"reward {ep.reward} | end {ep.end_reason} | steps {len(ep.steps)} | "
-              f"turns {ep.turns}")
+        print(f"{'PASS' if ep.success else 'FAIL'} | reward {ep.reward} | end {ep.end_reason} | "
+              f"steps {len(ep.steps)} | turns {ep.turns}")
         for p in ep.problems:
             print(f"  problem: {p}")
+        if args.breakdown:
+            print("reward breakdown:")
+            for line in breakdown_lines(ep.breakdown):
+                print(f"  {line}")
     return EXIT_OK if ep.success else EXIT_FAILED

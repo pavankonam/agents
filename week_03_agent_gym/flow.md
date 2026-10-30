@@ -1,11 +1,11 @@
 # Flow: Agent Gym
 
-Status: **Day 1**. Every box exists in the code. The dashed part (rubrics, failure taxonomy, trajectories) arrives on days 2 to 5.
+Status: **Day 2**. Every solid box exists in the code. The dashed part (failure taxonomy, trajectories) arrives on days 3 to 5.
 
 ```mermaid
 flowchart TD
-    CLI[python3 -m agent_gym<br/>list, run TASK] --> RE
-    QM[quiz/quiz_model.py<br/>reference runs + zero score controls] --> RE
+    CLI[python3 -m agent_gym<br/>list, run TASK --breakdown] --> RE
+    QM[quiz/quiz_model.py<br/>reference runs, zero score controls,<br/>messy but correct control] --> RE
     RE[run_episode<br/>agent.py] -->|reset task_id| ENV[Environment.reset<br/>seed_data copied, State new]
     ENV -->|Observation: task prompt| RE
     RE --> SP[system prompt: env name,<br/>description, max steps, submit rule]
@@ -17,6 +17,8 @@ flowchart TD
     ST -->|validate_args fails:<br/>missing, unexpected,<br/>wrong type, _raw| ERR
     ST -->|handler raises ToolError| ERR
     ST -->|ok| OK[Observation ok=True<br/>tool result text]
+    ERR --> LOG[StepLog tool, arguments, ok]
+    OK --> LOG
     OK --> LIM{step_count >= max_steps?}
     ERR --> LIM
     LIM -->|yes| SL[env.finish step_limit]
@@ -26,9 +28,13 @@ flowchart TD
     FIN --> CHK
     SL --> CHK
     TL --> CHK
-    CHK[task.check initial, final<br/>expect: exact adds and removes,<br/>no other change] --> RW[reward 1.0 if no problems else 0.0<br/>State: done, reward, end_reason, problems]
-    RW --> EP[Episode: steps, reward,<br/>end_reason, problems, turns]
-    RW -.->|day 2| RB[Rubrics: WeightedSum, Gate,<br/>trajectory penalties]
+    CHK[RubricContext: initial, final,<br/>StepLogs, reference, end_reason] --> RB
+    LOG -.-> CHK
+    RB[task.get_rubric<br/>default: Gate state<br/>then 0.8 StateCheck + 0.2 TrajectoryRubric] --> SC[StateCheck: task.check<br/>exact adds and removes, no other change]
+    RB --> TJ[TrajectoryRubric: -0.2 per refused step,<br/>-0.1 per step over the reference]
+    SC --> RW[State: reward = rubric score,<br/>passed = no problems,<br/>problems, breakdown tree]
+    TJ --> RW
+    RW --> EP[Episode: steps, reward, passed,<br/>breakdown, end_reason, problems, turns]
     EP -.->|day 3| FT[Failure taxonomy per step]
     EP -.->|day 5| TR[JSONL trajectory, replay]
 ```
@@ -39,7 +45,19 @@ flowchart TD
 2. The model gets a system prompt naming the environment, its data model and its step limit, the task prompt, and the tool schemas (the env's tools plus `submit`).
 3. Each tool call becomes an `Action` and goes through `env.step`. Unknown tools, bad arguments and tool errors come back as `ok=False` with an `error:` message and still count as a step (D11).
 4. The episode ends on `submit`, on a plain text reply (`no_submit`), at the env's step limit or at the runner's turn limit (D10).
-5. On every end the env runs the task's `check(initial, final)`. Reward is 1.0 only if the final data has exactly the expected changes and nothing else (D7, D9). The agent never sees the reward (D8).
+5. Every step, accepted or refused, is logged by the env as a `StepLog` (tool, arguments, ok).
+6. On every end the env builds a `RubricContext` and scores it with the task's rubric (D13). The default (D14) is a `Gate` on the state check: if the final data does not have exactly the expected changes and nothing else (D7, D9), reward is 0. Otherwise reward is 0.8 x outcome + 0.2 x trajectory, where the trajectory loses 0.2 per refused step and 0.1 per accepted step beyond the reference solution (submit not counted).
+7. `passed` means the state check found no problems; `success` follows it, so a correct but messy run passes with a reward below 1.0 (D15). The full rubric tree is kept as `breakdown`. The agent never sees reward, breakdown or problems (D8).
+
+## Reward examples (default rubric)
+
+| Run | passed | reward |
+| --- | --- | --- |
+| Reference solution, then submit | yes | 1.0 |
+| One refused call, then the reference | yes | 0.8 + 0.2 x 0.8 = 0.96 |
+| One refused call, one repeated lookup, then the reference | yes | 0.8 + 0.2 x 0.7 = 0.94 |
+| Correct target plus collateral damage (extra deletion) | no | 0.0 (gate) |
+| Submit at once | no | 0.0 (gate) |
 
 ## Calendar environment
 

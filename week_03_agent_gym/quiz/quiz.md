@@ -25,3 +25,23 @@ Answer: The calendar list followed by a new line and `episode over (step_limit)`
 Verified: `Environment.step` appends `end.content` to the tool result when `step_count >= max_steps`; ran it on 2026-10-29: content ends with `episode over (step_limit)`, `done True`, reward `0.0`. Test `test_step_limit_ends_episode_on_last_step`. **PASS**
 
 Day 1 result: 5/5 PASS.
+
+## Day 2 (2026-10-30)
+
+**Q6. In `create_by_name` the model first calls `list_events` with `calendar_id` "Personal" (refused), then `list_calendars`, then the right `create_event`, then submits. Passed, reward, and what does the breakdown say?**
+Answer: Passed, reward 0.96. The refused call costs 0.2 of the trajectory score (0.8); accepted work steps are 2, equal to the reference, so no extra step charge. 0.8 x 1.0 + 0.2 x 0.8 = 0.96. The tree is gate 0.960 > state 1.000 and outcome_and_process 0.960 > state x0.8 1.000, trajectory x0.2 0.800 with "1 refused step(s) -0.2".
+Verified: ran exactly this episode on 2026-10-30 and printed `breakdown_lines`: `0.96 True`, tree as stated. **PASS**
+
+**Q7. In `delete_by_title` the model lists calendars twice, lists events, deletes `evt_002` and `evt_004`, then submits. Reward?**
+Answer: 0.0. The state check finds `unexpected deletion: evt_004`, so the gate stops at "state scored 0 < 1, inner rubric not scored" and the extra lookup is never charged. passed is False.
+Verified: ran it on 2026-10-30: `0.0 False`, breakdown has only the gate and the state child with that problem. `Gate.score` returns before scoring `inner`. **PASS**
+
+**Q8. Does the `submit` call count as a step over the reference in `TrajectoryRubric`?**
+Answer: No. `RubricContext.work_steps` drops `submit` before counting, and `Task.reference` never includes submit, so a clean reference run with submit scores 1.0.
+Verified: `work_steps` filters `s.tool != SUBMIT`; test `test_trajectory_clean_run_is_one_and_submit_not_counted`. **PASS**
+
+**Q9. A refused `create_event` (overlap) is followed by a correct one in `first_free_slot`. Is the refused one also counted as an extra step?**
+Answer: No. Extra steps count only accepted work steps beyond `len(reference)`: 3 accepted (list_calendars, list_events, create_event) vs a reference of 3, so 0 extra and 1 refused: reward 0.96.
+Verified: `TrajectoryRubric.score` uses `accepted = len(work) - refused`; test `test_env_records_steps_and_breakdown_messy_but_correct` asserts 0.96 and passed. **PASS**
+
+Day 2 result: 4/4 PASS.

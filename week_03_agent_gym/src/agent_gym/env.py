@@ -1,7 +1,7 @@
 """Environment base class: reset / step / state, in process (D3, D4).
 
-Rewards are computed inside the environment from its final state (D7), never
-from what the agent says it did.
+Rewards are computed inside the environment from its final state (D7) and its
+recorded steps, through the task's rubric (D13), never from what the agent says it did.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .rubrics import Rubric, RubricContext, StepLog, default_rubric
 from .types import SUBMIT, Action, Observation, State
 
 # (initial data, final data) -> list of problems. Empty list means success.
@@ -60,9 +61,17 @@ class Task:
     reference: list[Action]  # a known good solution, without the final submit
     check: Check
     tags: tuple[str, ...] = ()
+    rubric: Rubric | None = None  # None means default_rubric(check) (D14)
+
+    def get_rubric(self) -> Rubric:
+        return self.rubric if self.rubric is not None else default_rubric(self.check)
 
 
 SUBMIT_SPEC_PARAMS = {"summary": Param("string", "One sentence on what you did.", required=False)}
+
+
+def _as_dict(args: Any) -> dict:
+    return dict(args) if isinstance(args, dict) else {"_raw": args}
 
 
 def validate_args(spec: ToolSpec, args: Any) -> str | None:
@@ -100,6 +109,7 @@ class Environment:
         self._task: Task | None = None
         self._state = State()
         self._episodes = 0
+        self._steps: list[StepLog] = []
 
     # ----- to implement in subclasses -----
     def seed_data(self, seed: int | None) -> dict:
@@ -132,6 +142,7 @@ class Environment:
         self.data = self.seed_data(seed)
         self._initial = copy.deepcopy(self.data)
         self._episodes += 1
+        self._steps = []
         self._state = State(episode_id=episode_id or f"{self.name}-{self._episodes}",
                             task_id=task_id)
         return Observation(content=self._task.prompt,
@@ -145,8 +156,10 @@ class Environment:
             raise EpisodeOver(f"episode {self._state.episode_id} is over; call reset()")
         self._state.step_count += 1
         if action.tool == SUBMIT:
+            self._steps.append(StepLog(SUBMIT, _as_dict(action.arguments), True))
             return self.finish("submitted")
         obs = self._call(action)
+        self._steps.append(StepLog(action.tool, _as_dict(action.arguments), obs.ok))
         if self._state.step_count >= self.max_steps:
             end = self.finish("step_limit")
             obs.done, obs.reward = True, end.reward
@@ -155,20 +168,31 @@ class Environment:
         return obs
 
     def finish(self, reason: str) -> Observation:
-        """End the episode now and score it with the task's state check."""
+        """End the episode now and score it with the task's rubric.
+
+        `problems` are always the task's state check problems; `passed` means
+        there were none. `reward` is the rubric score and `breakdown` its tree.
+        """
         if self._task is None:
             raise EpisodeOver("call reset() before finish()")
         if self._state.done:
             raise EpisodeOver(f"episode {self._state.episode_id} is over; call reset()")
-        problems = self._task.check(self._initial, self.data)
-        reward = 0.0 if problems else 1.0
+        problems = list(self._task.check(self._initial, self.data))
+        ctx = RubricContext(self._initial, self.data, list(self._steps),
+                            list(self._task.reference), reason)
+        result = self._task.get_rubric().score(ctx)
+        reward = result.score
         self._state.done = True
         self._state.reward = reward
+        self._state.passed = not problems
         self._state.end_reason = reason
-        self._state.problems = list(problems)
-        # The agent is not told the reward or the problems (D8).
+        self._state.problems = problems
+        self._state.breakdown = result.to_dict()
+        # The agent is not told the reward, the breakdown or the problems (D8).
         return Observation(content=f"episode over ({reason})", done=True, reward=reward,
-                           metadata={"end_reason": reason, "problems": list(problems)})
+                           metadata={"end_reason": reason, "problems": list(problems),
+                                     "passed": not problems,
+                                     "breakdown": result.to_dict()})
 
     # ----- internals -----
     def _call(self, action: Action) -> Observation:

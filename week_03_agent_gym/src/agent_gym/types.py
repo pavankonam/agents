@@ -44,5 +44,7 @@ class State:
     step_count: int = 0
     done: bool = False
     reward: float | None = None
+    passed: bool = False  # the state check found no problems (D15)
     end_reason: str = ""
     problems: list[str] = field(default_factory=list)
+    breakdown: dict[str, Any] = field(default_factory=dict)  # rubric tree (D13)

@@ -31,6 +31,8 @@ class Episode:
     reward: float
     end_reason: str
     problems: list[str]
+    passed: bool = False
+    breakdown: dict = field(default_factory=dict)
     steps: list[StepRecord] = field(default_factory=list)
     turns: int = 0
     final_text: str = ""
@@ -38,7 +40,8 @@ class Episode:
 
     @property
     def success(self) -> bool:
-        return self.reward == 1.0
+        """The state check passed. Reward can still be below 1.0 for a messy trajectory (D15)."""
+        return self.passed
 
     def to_dict(self, with_messages: bool = False) -> dict:
         d = asdict(self)
@@ -94,5 +97,6 @@ def run_episode(env: Environment, client: LLMClient, task_id: str | None = None,
     st = env.state
     return Episode(env=env.name, task_id=st.task_id, episode_id=st.episode_id,
                    reward=st.reward if st.reward is not None else 0.0,
-                   end_reason=st.end_reason, problems=st.problems, steps=steps,
+                   end_reason=st.end_reason, problems=st.problems, passed=st.passed,
+                   breakdown=st.breakdown, steps=steps,
                    turns=turns, final_text=final_text, messages=messages)

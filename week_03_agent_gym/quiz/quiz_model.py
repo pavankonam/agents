@@ -3,10 +3,13 @@
     python3 quiz/quiz_model.py --fake            # scripted reference solutions, no Ollama
     python3 quiz/quiz_model.py [--model M] [--only TEXT]
 
-Pass means reward 1.0 from the environment's state check (D7), never the model's
-own claim. In --fake mode two controls also run per task: a model that answers
-without doing anything, and one that submits at once. Both must score 0, which
-shows the checks are not trivially satisfied (D12).
+Pass means the environment's state check found no problems (D7, D15), never the
+model's own claim; the reward printed next to it is the rubric score (D13), which
+is below 1.0 when the run had refused or extra steps. In --fake mode two controls
+also run per task: a model that answers without doing anything, and one that
+submits at once. Both must score 0 (D12). A third, messy control repeats a lookup
+and makes one refused call before the reference solution: it must still pass but
+score strictly between 0 and 1, which shows the process rubric is live (D16).
 
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
@@ -31,6 +34,13 @@ def reference_script(task) -> list[LLMResponse]:
     turns = [LLMResponse(tool_calls=[ToolCall(a.tool, dict(a.arguments))])
              for a in task.reference]
     return turns + [LLMResponse(tool_calls=[ToolCall(SUBMIT, {"summary": "done"})])]
+
+
+def messy_script(task) -> list[LLMResponse]:
+    """Correct outcome, poor process: one call to an unknown tool, one repeated lookup."""
+    noise = [LLMResponse(tool_calls=[ToolCall("guess_id", {})]),
+             LLMResponse(tool_calls=[ToolCall("list_calendars", {})])]
+    return noise + reference_script(task)
 
 
 CONTROLS = {
@@ -67,7 +77,7 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
         ok = ep.success
         passed += ok
         errors = sum(not s.ok for s in ep.steps)
-        print(f"{'PASS' if ok else 'FAIL'} {name}: reward {ep.reward}, {len(ep.steps)} steps "
+        print(f"{'PASS' if ok else 'FAIL'} {name}: reward {ep.reward:.3f}, {len(ep.steps)} steps "
               f"({errors} refused), end {ep.end_reason}")
         for p in ep.problems:
             print(f"     problem: {p}")
@@ -78,9 +88,17 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
                 controls_ok += c.reward == 0.0
                 if c.reward != 0.0:
                     print(f"FAIL control '{label}' scored {c.reward} on {name}")
+            m = run_episode(cls(), FakeClient(messy_script(task)), task.id)
+            controls_run += 1
+            messy_ok = m.success and 0.0 < m.reward < 1.0
+            controls_ok += messy_ok
+            if not messy_ok:
+                print(f"FAIL control 'messy but correct' on {name}: passed {m.success}, "
+                      f"reward {m.reward}")
     print(f"\n{passed}/{len(chosen)} tasks passed ({'fake' if fake else model})")
     if fake:
-        print(f"{controls_ok}/{controls_run} controls scored 0 as expected")
+        print(f"{controls_ok}/{controls_run} controls behaved as expected "
+              "(do nothing scores 0, messy but correct passes below 1.0)")
     return 0 if passed == len(chosen) and controls_ok == controls_run else 1
 
 

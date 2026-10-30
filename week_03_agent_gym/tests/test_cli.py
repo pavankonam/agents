@@ -29,3 +29,17 @@ def test_run_fake_success_and_failure(capsys):
 
 def test_run_ollama_missing():
     assert main(["run", "create_explicit"], check=lambda m: (False, "down")) == 4
+
+
+def test_run_breakdown_flag_prints_rubric_tree(capsys):
+    from agent_gym.cli import main
+    from agent_gym.llm import FakeClient, LLMResponse, ToolCall
+    client = FakeClient([LLMResponse(tool_calls=[ToolCall("nope", {})]),
+                         LLMResponse(tool_calls=[ToolCall("create_event", {
+                             "calendar_id": "cal_team", "title": "Design review",
+                             "date": "2026-11-02", "start": "10:00", "end": "10:30"})]),
+                         LLMResponse(tool_calls=[ToolCall("submit", {})])])
+    assert main(["run", "create_explicit", "--breakdown"], client=client) == 0
+    out = capsys.readouterr().out
+    assert "PASS | reward 0.96" in out and "reward breakdown:" in out
+    assert "1 refused step(s) -0.2" in out

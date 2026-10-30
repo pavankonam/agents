@@ -67,3 +67,27 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** Besides the scripted reference run per task, `--fake` runs two controls per task (answer without acting, submit at once) that must score 0.
 **Why:** A verifier that passes when nothing happened is worthless; the controls prove each check is not trivially satisfied.
+
+## D13. Rubrics are small composable objects that return a score tree (2026-10-30)
+
+**Decision:** A `Rubric` has a `name` and `score(ctx) -> RubricResult(name, score, detail, children, weight)`. Four are built in: `StateCheck`, `TrajectoryRubric`, `WeightedSum`, `Gate`. The env builds a `RubricContext` (initial data, final data, a `StepLog` per step, the task reference, end reason) in `finish()` and stores the result tree as `State.breakdown`.
+**Why:** OpenEnv computes rewards inside the environment with composable rubrics; a tree that keeps every child score and a one line reason per penalty makes a low reward explainable without rerunning the episode. Plain classes with a protocol keep it stdlib only.
+**Alternatives:** One hard coded reward formula in `finish()` (no way to vary it per task), a flat dict of named terms (loses how terms combine), an LLM judge for process quality (weak evidence, D7).
+
+## D14. Default reward: Gate(state) over 0.8 state + 0.2 trajectory; tasks may override (2026-10-30)
+
+**Decision:** `default_rubric(check)` gates on the state check and then takes 0.8 of the outcome plus 0.2 of the trajectory score. `TrajectoryRubric` charges 0.2 per refused step and 0.1 per accepted work step beyond `len(reference)`; a refused step is not also counted as extra, `submit` is never counted, and the score is clipped at 0. `Task.rubric` replaces the default when set.
+**Why:** The outcome must dominate: a run that leaves the wrong state is worth 0 however tidy it was, and a correct run never drops below 0.8. Refusals cost more than extra steps because a refused call is a real tool use error (Turing: wrong arguments 51%, wrong tool 23%), while an extra lookup is only waste. The penalties are round numbers that are easy to check by hand in the quiz.
+**Alternatives:** Pure weighted sum without a gate (a failed run with a clean trajectory would earn 0.2), multiplying outcome by process (same ordering, harder to read), counting the submit step (penalises the one call we ask for).
+
+## D15. `passed` is separate from `reward`, and `Episode.success` means passed (2026-10-30)
+
+**Decision:** `State.passed` and `Episode.passed` are True when the state check returns no problems. `Episode.success` now returns `passed` instead of `reward == 1.0`. `problems` stay the state check problems. The CLI exit code and the quiz PASS still follow success.
+**Why:** With process terms a correct but messy run scores e.g. 0.96; calling that a failure would merge two questions (did it do the job, how well) that the day 7 results table must keep apart: pass rate and mean reward.
+**Alternatives:** Keep success as reward 1.0 (any refused step would count as a failed task), a reward threshold like 0.9 (arbitrary and depends on the rubric).
+
+## D16. quiz_model adds a "messy but correct" control (2026-10-30)
+
+**Decision:** In `--fake` mode each task also runs a script that calls an unknown tool once, repeats `list_calendars`, then plays the reference solution. It must pass and score strictly between 0 and 1.
+**Why:** The zero score controls (D12) prove the outcome check is not trivially satisfied; this one proves the process rubric is actually wired in. If someone removed the trajectory term, every task would score 1.0 and the control would fail.
+
