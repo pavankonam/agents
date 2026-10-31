@@ -12,7 +12,7 @@ import datetime as dt
 import json
 import re
 
-from ..env import Environment, Param, Task, ToolError, ToolSpec
+from ..env import Environment, Param, Task, ToolError, ToolSpec, UnknownIdError
 from ..types import Action
 
 SEED = {
@@ -142,11 +142,11 @@ class CalendarEnv(Environment):
     def tool_specs(self) -> dict[str, ToolSpec]:
         return {s.name: s for s in [
             ToolSpec("list_calendars", "List all calendars with their id and name.", {},
-                     self._list_calendars),
+                     self._list_calendars, read_only=True),
             ToolSpec("list_events", "List events of one calendar, optionally on one date.",
                      {"calendar_id": Param("string", "Calendar id, for example cal_team."),
                       "date": Param("string", "Optional date YYYY-MM-DD.", required=False)},
-                     self._list_events),
+                     self._list_events, read_only=True),
             ToolSpec("create_event", "Create an event. Fails if it overlaps another event "
                      "on the same calendar.",
                      {"calendar_id": Param("string", "Calendar id."),
@@ -166,7 +166,7 @@ class CalendarEnv(Environment):
             if c["id"] == calendar_id:
                 return c
         ids = ", ".join(c["id"] for c in self.data["calendars"])
-        raise ToolError(f"no calendar with id '{calendar_id}' (ids: {ids}). "
+        raise UnknownIdError(f"no calendar with id '{calendar_id}' (ids: {ids}). "
                         "Use list_calendars to find ids.")
 
     def _list_calendars(self) -> str:
@@ -207,7 +207,7 @@ class CalendarEnv(Environment):
             if e["id"] == event_id:
                 del self.data["events"][i]
                 return f"deleted {event_id} ({_show(e)})"
-        raise ToolError(f"no event with id '{event_id}'. Use list_events to find ids.")
+        raise UnknownIdError(f"no event with id '{event_id}'. Use list_events to find ids.")
 
 
 def _check_date(value: str) -> None:

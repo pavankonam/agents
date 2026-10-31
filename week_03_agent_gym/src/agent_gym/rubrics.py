@@ -26,11 +26,19 @@ Check = Callable[[dict, dict], list[str]]
 
 @dataclass
 class StepLog:
-    """What the env records per step for rubrics: the action and whether it was accepted."""
+    """What the env records per step: the action, whether it was accepted and, if not, why.
+
+    `error_kind` is "" for accepted steps, else one of ERROR_KINDS (D17).
+    """
 
     tool: str
     arguments: dict
     ok: bool
+    error_kind: str = ""
+
+
+# Why the env refused a step, set by Environment._call (D17).
+ERROR_KINDS = ("unknown_tool", "bad_arguments", "unknown_id", "tool_error")
 
 
 @dataclass

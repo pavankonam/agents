@@ -11,6 +11,11 @@ submits at once. Both must score 0 (D12). A third, messy control repeats a looku
 and makes one refused call before the reference solution: it must still pass but
 score strictly between 0 and 1, which shows the process rubric is live (D16).
 
+Every step that was refused or wasted gets a failure kind (D18). The reference
+run must have none, the messy control must show exactly wrong_tool then
+repeated_lookup (or extra_step when the reference has no lookup), and the run
+ends with a per kind failure table across all tasks (D20).
+
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
 
@@ -24,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_gym.agent import run_episode  # noqa: E402
 from agent_gym.envs import ENVIRONMENTS  # noqa: E402
+from agent_gym.failures import KINDS, summarize  # noqa: E402
 from agent_gym.llm import (DEFAULT_MODEL, FakeClient, LLMResponse, OllamaClient,  # noqa: E402
                            ToolCall, check_ollama)
 from agent_gym.types import SUBMIT  # noqa: E402
@@ -41,6 +47,22 @@ def messy_script(task) -> list[LLMResponse]:
     noise = [LLMResponse(tool_calls=[ToolCall("guess_id", {})]),
              LLMResponse(tool_calls=[ToolCall("list_calendars", {})])]
     return noise + reference_script(task)
+
+
+def messy_expected(task) -> list[str]:
+    """Failure kinds the messy script must produce on this task."""
+    second = "repeated_lookup" if task.reference[:1] and \
+        task.reference[0].tool == "list_calendars" else "extra_step"
+    return ["wrong_tool", second]
+
+
+def failure_table(episodes) -> list[str]:
+    rows = summarize(episodes)
+    short = [k.replace("_", " ") for k in KINDS]
+    lines = ["task".ljust(20) + " ".join(f"{s:>15}" for s in short)]
+    for task, counts in rows.items():
+        lines.append(task.ljust(20) + " ".join(f"{counts[k]:>15}" for k in KINDS))
+    return lines
 
 
 CONTROLS = {
@@ -71,16 +93,20 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     passed = 0
     controls_ok = 0
     controls_run = 0
+    episodes = []
     for name, cls, task in chosen:
         client = FakeClient(reference_script(task)) if fake else OllamaClient(model=model)
         ep = run_episode(cls(), client, task.id)
-        ok = ep.success
+        episodes.append(ep)
+        ok = ep.success and not (fake and ep.failures)
         passed += ok
         errors = sum(not s.ok for s in ep.steps)
         print(f"{'PASS' if ok else 'FAIL'} {name}: reward {ep.reward:.3f}, {len(ep.steps)} steps "
               f"({errors} refused), end {ep.end_reason}")
         for p in ep.problems:
             print(f"     problem: {p}")
+        for f in ep.failures:
+            print(f"     failure: step {f['index']} {f['tool']}: {f['kind']}")
         if fake:
             for label, script in CONTROLS.items():
                 c = run_episode(cls(), FakeClient(script()), task.id)
@@ -90,15 +116,20 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
                     print(f"FAIL control '{label}' scored {c.reward} on {name}")
             m = run_episode(cls(), FakeClient(messy_script(task)), task.id)
             controls_run += 1
-            messy_ok = m.success and 0.0 < m.reward < 1.0
+            kinds = [f["kind"] for f in m.failures]
+            messy_ok = m.success and 0.0 < m.reward < 1.0 and kinds == messy_expected(task)
             controls_ok += messy_ok
             if not messy_ok:
                 print(f"FAIL control 'messy but correct' on {name}: passed {m.success}, "
-                      f"reward {m.reward}")
+                      f"reward {m.reward}, failures {kinds}")
+    print("\nfailure kinds per task (" + ("reference runs" if fake else model) + "):")
+    for line in failure_table(episodes):
+        print("  " + line)
     print(f"\n{passed}/{len(chosen)} tasks passed ({'fake' if fake else model})")
     if fake:
         print(f"{controls_ok}/{controls_run} controls behaved as expected "
-              "(do nothing scores 0, messy but correct passes below 1.0)")
+              "(do nothing scores 0, messy but correct passes below 1.0 "
+              "with the expected failure kinds)")
     return 0 if passed == len(chosen) and controls_ok == controls_run else 1
 
 

@@ -91,3 +91,25 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Decision:** In `--fake` mode each task also runs a script that calls an unknown tool once, repeats `list_calendars`, then plays the reference solution. It must pass and score strictly between 0 and 1.
 **Why:** The zero score controls (D12) prove the outcome check is not trivially satisfied; this one proves the process rubric is actually wired in. If someone removed the trajectory term, every task would score 1.0 and the control would fail.
 
+
+## D17. The env tags every refused step with an error kind; unknown ids get their own exception (2026-10-31)
+
+**Decision:** `Environment._call` puts `error_kind` in the refused observation's metadata and the env copies it into `StepLog.error_kind`: `unknown_tool`, `bad_arguments` (from `validate_args`), `unknown_id` (the new `UnknownIdError`, a subclass of `ToolError`) or `tool_error` (any other `ToolError`). The calendar env raises `UnknownIdError` for an unknown calendar or event id.
+**Why:** The env already knows why it refused a step; recovering that later by parsing error text would break as soon as a message is reworded. A subclass keeps old `except ToolError` code working and lets each env decide what counts as an id.
+**Alternatives:** Regex over the `error:` text (fragile), an `ids` registry per env that the classifier checks (more code per env for the same answer).
+
+## D18. Failure taxonomy: six kinds, one per wasted step, judged against the task reference (2026-10-31)
+
+**Decision:** `failures.classify(steps, reference, specs)` gives each refused or wasted work step one kind: `wrong_tool`, `wrong_arguments`, `wrong_order`, `invented_id`, `repeated_lookup`, `extra_step`. Refused steps map from the error kind (a tool error such as an overlap or a bad date is `wrong_arguments`, the values were wrong). Accepted steps are checked in this order: identical read only repeat, tool outside the reference (write = `wrong_tool`, lookup = `extra_step`), more calls of a tool than the reference makes (`extra_step`), and a reference prerequisite not yet accepted (`wrong_order`, each missing prerequisite reported once so one skipped lookup is one failure). `ToolSpec.read_only` marks lookups. Results are stored as `State.failures` and `Episode.failures`; `count_kinds` and `summarize` count them per episode and per task.
+**Why:** The PRD's day 7 table must say which mistake a local model makes, not only how often it fails. The first four kinds are Turing's categories; `repeated_lookup` and `extra_step` cover the waste that `TrajectoryRubric` already charges. One kind per step keeps counts additive. Flagging a guessed id that happened to be right (writing in `create_by_name` before `list_calendars`) as `wrong_order` makes the id vs name gap visible on day 4 even when the outcome passes.
+**Alternatives:** Several kinds per step (counts no longer add up to wasted steps), an LLM labelling the trajectory (weak evidence, D7), comparing arguments with the reference too (most tasks have more than one valid argument set, e.g. the `date` filter on `list_events` is optional).
+
+## D19. The taxonomy explains the reward and never changes it (2026-10-31)
+
+**Decision:** `classify` runs in `Environment.finish` after the rubric; nothing in the rubric reads it. A run can have reward 1.0 and still list a `wrong_order` failure (skipped lookup, right guess).
+**Why:** Reward is the score, failures are the diagnosis. Feeding the taxonomy into the reward would charge the same refused step twice and tie the reward to classification rules that may still change this week.
+
+## D20. quiz_model checks the taxonomy and prints a failure table (2026-10-31)
+
+**Decision:** In `--fake` mode a reference run counts as passed only if it has no failures, and the messy control must produce exactly `wrong_tool` then `repeated_lookup` (or `extra_step` on `create_explicit`, whose reference has no lookup). Every run, fake or real, ends with a table of failure kinds per task with a total row.
+**Why:** Same idea as the controls in D12 and D16: prove the classifier fires on known mistakes and stays silent on a clean run. The table is the shape of the day 7 results.

@@ -48,3 +48,4 @@ class State:
     end_reason: str = ""
     problems: list[str] = field(default_factory=list)
     breakdown: dict[str, Any] = field(default_factory=dict)  # rubric tree (D13)
+    failures: list[dict[str, Any]] = field(default_factory=list)  # failure taxonomy (D18)

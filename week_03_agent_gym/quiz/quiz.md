@@ -45,3 +45,23 @@ Answer: No. Extra steps count only accepted work steps beyond `len(reference)`: 
 Verified: `TrajectoryRubric.score` uses `accepted = len(work) - refused`; test `test_env_records_steps_and_breakdown_messy_but_correct` asserts 0.96 and passed. **PASS**
 
 Day 2 result: 4/4 PASS.
+
+## Day 3 (2026-10-31)
+
+**Q10. In `delete_by_title` the model skips `list_calendars`, calls `list_events` with `cal_team` and `2026-11-02`, deletes `evt_002` and submits. Passed, reward, failures?**
+Answer: Passed, reward 1.0 (2 accepted work steps, fewer than the reference of 3, nothing refused). One failure: step 1 `list_events` is `wrong_order` ("called before list_calendars"); the delete is not flagged again because each missing prerequisite is reported once. The failure does not lower the reward (D19).
+Verified: ran it on 2026-10-31: `True 1.0 [{'index': 1, 'tool': 'list_events', 'kind': 'wrong_order', 'reason': 'called before list_calendars'}]`. Test `test_wrong_order_reports_each_missing_prerequisite_once`. **PASS**
+
+**Q11. In `create_by_name` the first call is `list_events` with `calendar_id` "Personal". Which failure kind, and why not `wrong_arguments`?**
+Answer: `invented_id`. The arguments fit the schema (a string), so `validate_args` accepts them; the handler then raises `UnknownIdError` because no calendar has that id, the env tags the step `unknown_id`, and that maps to `invented_id`. After the lookup and correct create the run passes with reward 0.96.
+Verified: `CalendarEnv._calendar` raises `UnknownIdError`; `Environment._call` catches it before `ToolError`; ran it on 2026-10-31: `True 0.96`, kind `invented_id`, reason `refused (unknown_id)`. **PASS**
+
+**Q12. In `delete_by_title` the model calls `list_calendars` twice and then plays the reference. Failure kind and reward?**
+Answer: Step 2 is `repeated_lookup` (identical read only call). Reward 0.98: 4 accepted work steps vs a reference of 3 is one extra step, trajectory 0.9, 0.8 + 0.2 x 0.9.
+Verified: ran it on 2026-10-31: `True 0.98`, one failure at index 2 `repeated_lookup`. `classify` checks the repeat before the reference count, so it is not labelled `extra_step`. **PASS**
+
+**Q13. In `first_free_slot` the model books with start "3pm", is refused, then books 15:00 to 16:00 correctly. What kind is the refused step?**
+Answer: `wrong_arguments`. The schema accepts any string, the handler raises a plain `ToolError` ("start must be HH:MM"), the env tags it `tool_error`, and `REFUSED_KIND` maps `tool_error` to `wrong_arguments`. Reward 0.96.
+Verified: ran it on 2026-10-31: `True 0.96`, failure index 3 `create_event` `wrong_arguments`, reason `refused (tool_error)`. **PASS**
+
+Day 3 result: 4/4 PASS.

@@ -1,4 +1,4 @@
-"""CLI so far: `list` tasks and `run` one episode (with the reward breakdown). Full CLI is day 6."""
+"""CLI so far: `list` tasks and `run` one episode (reward breakdown, failure kinds). Full CLI is day 6."""
 
 from __future__ import annotations
 
@@ -75,6 +75,8 @@ def main(argv: list[str], client=None, check=check_ollama) -> int:
               f"steps {len(ep.steps)} | turns {ep.turns}")
         for p in ep.problems:
             print(f"  problem: {p}")
+        for f in ep.failures:
+            print(f"  failure: step {f['index']} {f['tool']}: {f['kind']} ({f['reason']})")
         if args.breakdown:
             print("reward breakdown:")
             for line in breakdown_lines(ep.breakdown):

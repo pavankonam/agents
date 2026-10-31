@@ -33,6 +33,7 @@ class Episode:
     problems: list[str]
     passed: bool = False
     breakdown: dict = field(default_factory=dict)
+    failures: list[dict] = field(default_factory=list)  # failure taxonomy (D18)
     steps: list[StepRecord] = field(default_factory=list)
     turns: int = 0
     final_text: str = ""
@@ -98,5 +99,5 @@ def run_episode(env: Environment, client: LLMClient, task_id: str | None = None,
     return Episode(env=env.name, task_id=st.task_id, episode_id=st.episode_id,
                    reward=st.reward if st.reward is not None else 0.0,
                    end_reason=st.end_reason, problems=st.problems, passed=st.passed,
-                   breakdown=st.breakdown, steps=steps,
+                   breakdown=st.breakdown, failures=st.failures, steps=steps,
                    turns=turns, final_text=final_text, messages=messages)

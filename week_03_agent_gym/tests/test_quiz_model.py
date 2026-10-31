@@ -11,6 +11,7 @@ def test_fake_quiz_passes(capsys):
     assert quiz_model.run(fake=True, model=None) == 0
     out = capsys.readouterr().out
     assert "4/4 tasks passed" in out and "12/12 controls" in out
+    assert "failure kinds per task" in out and "with the expected failure kinds" in out
 
 
 def test_only_filter_and_no_match(capsys):

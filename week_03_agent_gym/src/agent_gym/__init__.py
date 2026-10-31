@@ -1,7 +1,9 @@
 """Agent Gym: OpenEnv shaped environments for testing tool using agents on local models."""
 
 from .agent import Episode, run_episode, system_prompt
-from .env import Environment, EpisodeOver, Param, Task, ToolError, ToolSpec, validate_args
+from .env import (Environment, EpisodeOver, Param, Task, ToolError, ToolSpec, UnknownIdError,
+                  validate_args)
+from .failures import KINDS, StepFailure, classify, count_kinds, summarize
 from .envs import ENVIRONMENTS, CalendarEnv
 from .rubrics import (Gate, Rubric, RubricContext, RubricResult, StateCheck, StepLog,
                       TrajectoryRubric, WeightedSum, default_rubric)
@@ -11,4 +13,5 @@ __all__ = ["Action", "CalendarEnv", "ENVIRONMENTS", "Environment", "Episode", "E
            "Observation", "Param", "SUBMIT", "State", "Task", "ToolError", "ToolSpec",
            "run_episode", "system_prompt", "validate_args",
            "Gate", "Rubric", "RubricContext", "RubricResult", "StateCheck", "StepLog",
-           "TrajectoryRubric", "WeightedSum", "default_rubric"]
+           "TrajectoryRubric", "WeightedSum", "default_rubric",
+           "KINDS", "StepFailure", "UnknownIdError", "classify", "count_kinds", "summarize"]

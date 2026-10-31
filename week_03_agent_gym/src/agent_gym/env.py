@@ -10,6 +10,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .failures import classify
 from .rubrics import Rubric, RubricContext, StepLog, default_rubric
 from .types import SUBMIT, Action, Observation, State
 
@@ -27,6 +28,10 @@ class ToolError(Exception):
     """A tool refused its input. The message goes back to the agent."""
 
 
+class UnknownIdError(ToolError):
+    """A tool was given an id that does not exist in the env's data (D17)."""
+
+
 @dataclass
 class Param:
     type: str  # "string" or "integer"
@@ -40,6 +45,7 @@ class ToolSpec:
     description: str
     params: dict[str, Param]
     handler: Callable[..., str]
+    read_only: bool = False  # lookups; a repeat of one is a wasted step (D18)
 
     def schema(self) -> dict:
         """Ollama /api/chat tool schema."""
@@ -159,7 +165,8 @@ class Environment:
             self._steps.append(StepLog(SUBMIT, _as_dict(action.arguments), True))
             return self.finish("submitted")
         obs = self._call(action)
-        self._steps.append(StepLog(action.tool, _as_dict(action.arguments), obs.ok))
+        self._steps.append(StepLog(action.tool, _as_dict(action.arguments), obs.ok,
+                                   obs.metadata.get("error_kind", "")))
         if self._state.step_count >= self.max_steps:
             end = self.finish("step_limit")
             obs.done, obs.reward = True, end.reward
@@ -188,23 +195,34 @@ class Environment:
         self._state.end_reason = reason
         self._state.problems = problems
         self._state.breakdown = result.to_dict()
+        # Diagnosis only: the failure taxonomy never changes the reward (D19).
+        failures = [f.to_dict() for f in classify(self._steps, self._task.reference,
+                                                   self.tool_specs())]
+        self._state.failures = failures
         # The agent is not told the reward, the breakdown or the problems (D8).
         return Observation(content=f"episode over ({reason})", done=True, reward=reward,
                            metadata={"end_reason": reason, "problems": list(problems),
                                      "passed": not problems,
-                                     "breakdown": result.to_dict()})
+                                     "breakdown": result.to_dict(),
+                                     "failures": list(failures)})
 
     # ----- internals -----
     def _call(self, action: Action) -> Observation:
         specs = self.tool_specs()
         spec = specs.get(action.tool)
+
+        def refused(text: str, kind: str) -> Observation:
+            return Observation(f"error: {text}", ok=False, metadata={"error_kind": kind})
+
         if spec is None:
-            return Observation(f"error: unknown tool '{action.tool}'. "
-                               f"Tools: {', '.join(list(specs) + [SUBMIT])}", ok=False)
+            return refused(f"unknown tool '{action.tool}'. "
+                           f"Tools: {', '.join(list(specs) + [SUBMIT])}", "unknown_tool")
         problem = validate_args(spec, action.arguments)
         if problem:
-            return Observation(f"error: {problem}", ok=False)
+            return refused(problem, "bad_arguments")
         try:
             return Observation(spec.handler(**action.arguments))
+        except UnknownIdError as exc:
+            return refused(str(exc), "unknown_id")
         except ToolError as exc:
-            return Observation(f"error: {exc}", ok=False)
+            return refused(str(exc), "tool_error")
