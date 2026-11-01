@@ -19,6 +19,8 @@ Check = Callable[[dict, dict], list[str]]
 
 TYPES = {"string": str, "integer": int}
 
+VARIANTS = ("", "id", "name")
+
 
 class EpisodeOver(RuntimeError):
     """step() was called before reset() or after the episode ended."""
@@ -68,6 +70,16 @@ class Task:
     check: Check
     tags: tuple[str, ...] = ()
     rubric: Rubric | None = None  # None means default_rubric(check) (D14)
+    # Paired variants (D21): the same job phrased with explicit ids ("id") or with
+    # names the agent must look up ("name"). Tasks sharing `pair` form one pair.
+    pair: str = ""
+    variant: str = ""
+
+    def __post_init__(self):
+        if self.variant not in VARIANTS:
+            raise ValueError(f"task {self.id}: variant must be one of {VARIANTS}")
+        if bool(self.pair) != bool(self.variant):
+            raise ValueError(f"task {self.id}: set both pair and variant, or neither")
 
     def get_rubric(self) -> Rubric:
         return self.rubric if self.rubric is not None else default_rubric(self.check)

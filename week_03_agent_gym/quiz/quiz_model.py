@@ -13,8 +13,11 @@ score strictly between 0 and 1, which shows the process rubric is live (D16).
 
 Every step that was refused or wasted gets a failure kind (D18). The reference
 run must have none, the messy control must show exactly wrong_tool then
-repeated_lookup (or extra_step when the reference has no lookup), and the run
-ends with a per kind failure table across all tasks (D20).
+repeated_lookup (or extra_step when the reference does not start with that
+lookup); the lookup is the env's first argument free read only tool, and the run
+ends with a per kind failure table across all tasks (D20). Then a table of the
+paired tasks (same job, explicit ids vs names to look up) with pass rates per
+variant and the id vs name gap (D21); in --fake mode the gap must be 0 (D23).
 
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
@@ -30,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from agent_gym.agent import run_episode  # noqa: E402
 from agent_gym.envs import ENVIRONMENTS  # noqa: E402
 from agent_gym.failures import KINDS, summarize  # noqa: E402
+from agent_gym.gap import gap_lines, id_name_gap  # noqa: E402
 from agent_gym.llm import (DEFAULT_MODEL, FakeClient, LLMResponse, OllamaClient,  # noqa: E402
                            ToolCall, check_ollama)
 from agent_gym.types import SUBMIT  # noqa: E402
@@ -42,18 +46,31 @@ def reference_script(task) -> list[LLMResponse]:
     return turns + [LLMResponse(tool_calls=[ToolCall(SUBMIT, {"summary": "done"})])]
 
 
-def messy_script(task) -> list[LLMResponse]:
+def noise_lookup(cls) -> str:
+    """The env's first read only tool that takes no required arguments (D23)."""
+    for name, spec in cls().tool_specs().items():
+        if spec.read_only and not any(p.required for p in spec.params.values()):
+            return name
+    raise ValueError(f"{cls.name} has no argument free lookup for the messy control")
+
+
+def messy_script(task, cls) -> list[LLMResponse]:
     """Correct outcome, poor process: one call to an unknown tool, one repeated lookup."""
     noise = [LLMResponse(tool_calls=[ToolCall("guess_id", {})]),
-             LLMResponse(tool_calls=[ToolCall("list_calendars", {})])]
+             LLMResponse(tool_calls=[ToolCall(noise_lookup(cls), {})])]
     return noise + reference_script(task)
 
 
-def messy_expected(task) -> list[str]:
+def messy_expected(task, cls) -> list[str]:
     """Failure kinds the messy script must produce on this task."""
-    second = "repeated_lookup" if task.reference[:1] and \
-        task.reference[0].tool == "list_calendars" else "extra_step"
-    return ["wrong_tool", second]
+    lookup = noise_lookup(cls)
+    first = task.reference[0] if task.reference else None
+    if first is not None and first.tool == lookup and not first.arguments:
+        return ["wrong_tool", "repeated_lookup"]
+    if any(a.tool == lookup for a in task.reference):
+        raise ValueError(f"{task.id}: the reference uses {lookup} but not first; "
+                         "the messy control would not be predictable")
+    return ["wrong_tool", "extra_step"]
 
 
 def failure_table(episodes) -> list[str]:
@@ -114,10 +131,10 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
                 controls_ok += c.reward == 0.0
                 if c.reward != 0.0:
                     print(f"FAIL control '{label}' scored {c.reward} on {name}")
-            m = run_episode(cls(), FakeClient(messy_script(task)), task.id)
+            m = run_episode(cls(), FakeClient(messy_script(task, cls)), task.id)
             controls_run += 1
             kinds = [f["kind"] for f in m.failures]
-            messy_ok = m.success and 0.0 < m.reward < 1.0 and kinds == messy_expected(task)
+            messy_ok = m.success and 0.0 < m.reward < 1.0 and kinds == messy_expected(task, cls)
             controls_ok += messy_ok
             if not messy_ok:
                 print(f"FAIL control 'messy but correct' on {name}: passed {m.success}, "
@@ -125,12 +142,20 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     print("\nfailure kinds per task (" + ("reference runs" if fake else model) + "):")
     for line in failure_table(episodes):
         print("  " + line)
+    gap = id_name_gap(episodes, ENVIRONMENTS)
+    print("\nid vs name pairs (" + ("reference runs" if fake else model) + "):")
+    for line in gap_lines(gap):
+        print("  " + line)
+    # The scripted reference solves both variants, so a fake run must show no gap (D23).
+    gap_ok = not fake or gap["gap"] in (None, 0.0)
+    if not gap_ok:
+        print(f"FAIL fake run shows an id vs name gap of {gap['gap']}")
     print(f"\n{passed}/{len(chosen)} tasks passed ({'fake' if fake else model})")
     if fake:
         print(f"{controls_ok}/{controls_run} controls behaved as expected "
               "(do nothing scores 0, messy but correct passes below 1.0 "
               "with the expected failure kinds)")
-    return 0 if passed == len(chosen) and controls_ok == controls_run else 1
+    return 0 if passed == len(chosen) and controls_ok == controls_run and gap_ok else 1
 
 
 def main(argv: list[str] | None = None) -> int:

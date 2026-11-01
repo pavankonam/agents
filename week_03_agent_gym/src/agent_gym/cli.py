@@ -1,4 +1,7 @@
-"""CLI so far: `list` tasks and `run` one episode (reward breakdown, failure kinds). Full CLI is day 6."""
+"""CLI so far: `list` tasks and `run` one episode (reward breakdown, failure kinds). Full CLI is day 6.
+
+A task can be named `env/task` (for example `inbox/assign_by_name`) instead of using --env.
+"""
 
 from __future__ import annotations
 
@@ -18,8 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     ls = sub.add_parser("list", help="list environments and tasks")
     ls.add_argument("--json", action="store_true")
     run = sub.add_parser("run", help="run one episode with a model")
-    run.add_argument("task", help="task id, see `list`")
-    run.add_argument("--env", default="calendar", choices=sorted(ENVIRONMENTS))
+    run.add_argument("task", help="task id or env/task, see `list`")
+    run.add_argument("--env", default=None, choices=sorted(ENVIRONMENTS),
+                     help="environment (default: calendar, or the env/ prefix of the task)")
     run.add_argument("--model", default=DEFAULT_MODEL)
     run.add_argument("--max-steps", type=int, default=20)
     run.add_argument("--json", action="store_true")
@@ -43,15 +47,27 @@ def main(argv: list[str], client=None, check=check_ollama) -> int:
     except SystemExit as exc:
         return EXIT_USAGE if exc.code else EXIT_OK
     if args.command == "list":
-        rows = [{"env": name, "task": t.id, "tags": list(t.tags), "prompt": t.prompt}
+        rows = [{"env": name, "task": t.id, "tags": list(t.tags), "pair": t.pair,
+                 "variant": t.variant, "prompt": t.prompt}
                 for name, cls in ENVIRONMENTS.items() for t in cls.tasks.values()]
         if args.json:
             print(json.dumps({"tasks": rows}, indent=2))
         else:
             for r in rows:
-                print(f"{r['env']}/{r['task']:<18} [{', '.join(r['tags'])}]\n    {r['prompt']}")
+                pair = f" pair {r['pair']} ({r['variant']})" if r["pair"] else ""
+                print(f"{r['env']}/{r['task']:<18} [{', '.join(r['tags'])}]{pair}\n"
+                      f"    {r['prompt']}")
         return EXIT_OK
-    env_cls = ENVIRONMENTS[args.env]
+    env_name, task_id = args.env, args.task
+    if "/" in task_id:
+        prefix, task_id = task_id.split("/", 1)
+        if prefix not in ENVIRONMENTS or (env_name and env_name != prefix):
+            print(f"unknown or conflicting environment '{prefix}'. "
+                  f"Environments: {', '.join(ENVIRONMENTS)}")
+            return EXIT_USAGE
+        env_name = prefix
+    env_cls = ENVIRONMENTS[env_name or "calendar"]
+    args.task = task_id
     if args.task not in env_cls.tasks:
         print(f"unknown task '{args.task}'. Tasks: {', '.join(env_cls.tasks)}")
         return EXIT_USAGE

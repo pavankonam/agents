@@ -10,13 +10,16 @@ spec.loader.exec_module(quiz_model)
 def test_fake_quiz_passes(capsys):
     assert quiz_model.run(fake=True, model=None) == 0
     out = capsys.readouterr().out
-    assert "4/4 tasks passed" in out and "12/12 controls" in out
+    assert "12/12 tasks passed" in out and "36/36 controls" in out
+    assert "id vs name pairs" in out and "gap +0 points" in out
     assert "failure kinds per task" in out and "with the expected failure kinds" in out
 
 
 def test_only_filter_and_no_match(capsys):
-    assert quiz_model.run(fake=True, model=None, only="delete") == 0
-    assert "1/1 tasks passed" in capsys.readouterr().out
+    assert quiz_model.run(fake=True, model=None, only="delete_by_title") == 0
+    out = capsys.readouterr().out
+    assert "1/1 tasks passed" in out and "one variant only, not in total" in out
+    assert "gap n/a" in out
     assert quiz_model.run(fake=True, model=None, only="zzz") == 2
 
 
@@ -29,3 +32,13 @@ def test_reference_script_ends_with_submit():
     script = quiz_model.reference_script(task)
     assert script[-1].tool_calls[0].name == quiz_model.SUBMIT
     assert len(script) == len(task.reference) + 1
+
+
+def test_messy_expected_per_env():
+    cal, inbox = quiz_model.ENVIRONMENTS["calendar"], quiz_model.ENVIRONMENTS["inbox"]
+    assert quiz_model.noise_lookup(cal) == "list_calendars"
+    assert quiz_model.noise_lookup(inbox) == "list_agents"
+    assert quiz_model.messy_expected(inbox.tasks["assign_by_name"], inbox) == [
+        "wrong_tool", "repeated_lookup"]
+    assert quiz_model.messy_expected(inbox.tasks["close_by_name"], inbox) == [
+        "wrong_tool", "extra_step"]

@@ -1,12 +1,12 @@
 # Flow: Agent Gym
 
-Status: **Day 3**. Every solid box exists in the code. The dashed part (trajectories) arrives on day 5.
+Status: **Day 4**. Every solid box exists in the code. The dashed part (trajectories) arrives on day 5.
 
 ```mermaid
 flowchart TD
-    CLI[python3 -m agent_gym<br/>list, run TASK --breakdown<br/>prints failure kinds] --> RE
-    QM[quiz/quiz_model.py<br/>reference runs, zero score controls,<br/>messy but correct control,<br/>failure table per task] --> RE
-    RE[run_episode<br/>agent.py] -->|reset task_id| ENV[Environment.reset<br/>seed_data copied, State new]
+    CLI[python3 -m agent_gym<br/>list shows pairs, run ENV/TASK --breakdown<br/>prints failure kinds] --> RE
+    QM[quiz/quiz_model.py<br/>reference runs, zero score controls,<br/>messy but correct control,<br/>failure table per task,<br/>id vs name gap table] --> RE
+    RE[run_episode<br/>agent.py] -->|reset task_id| ENV[Environment.reset<br/>CalendarEnv or InboxEnv<br/>seed_data copied, State new]
     ENV -->|Observation: task prompt| RE
     RE --> SP[system prompt: env name,<br/>description, max steps, submit rule]
     SP --> M[LLM client.chat<br/>OllamaClient or FakeClient<br/>tools: env tools + submit]
@@ -30,7 +30,7 @@ flowchart TD
     TL --> CHK
     CHK[RubricContext: initial, final,<br/>StepLogs, reference, end_reason] --> RB
     LOG -.-> CHK
-    RB[task.get_rubric<br/>default: Gate state<br/>then 0.8 StateCheck + 0.2 TrajectoryRubric] --> SC[StateCheck: task.check<br/>exact adds and removes, no other change]
+    RB[task.get_rubric<br/>default: Gate state<br/>then 0.8 StateCheck + 0.2 TrajectoryRubric] --> SC[StateCheck: task.check<br/>calendar expect: exact adds and removes<br/>inbox expect_changes: exact field values<br/>no other change]
     RB --> TJ[TrajectoryRubric: -0.2 per refused step,<br/>-0.1 per step over the reference]
     SC --> RW[State: reward = rubric score,<br/>passed = no problems,<br/>problems, breakdown tree]
     TJ --> RW
@@ -38,6 +38,7 @@ flowchart TD
     FT -->|diagnosis only, reward unchanged| RW
     RW --> EP[Episode: steps, reward, passed,<br/>breakdown, failures, end_reason, problems, turns]
     EP --> SUM[summarize: counts per task and total]
+    EP --> GAP[gap.id_name_gap: paired tasks,<br/>pass rate id vs name, gap]
     EP -.->|day 5| TR[JSONL trajectory, replay]
 ```
 
@@ -73,6 +74,18 @@ flowchart TD
 | `extra_step` | accepted lookup the reference never uses, or more calls of a tool than the reference | `list_calendars` in `create_explicit` |
 | `wrong_order` | accepted call made before a reference prerequisite was accepted | `create_event(cal_personal, ...)` before `list_calendars` |
 
+## Paired tasks and the id vs name gap
+
+Some tasks come in pairs (D21): the same job and the same final state, phrased once with explicit ids (`variant="id"`) and once with names the agent must look up (`variant="name"`). `gap.id_name_gap` counts passes per variant over complete pairs and reports `gap = id pass rate - name pass rate`. In `--fake` mode the scripted reference solves both, so the gap must be 0 (D23).
+
+| Env | Pair | id variant | name variant |
+| --- | --- | --- | --- |
+| calendar | `dentist` | `create_by_id` | `create_by_name` |
+| calendar | `cancel_old_sync` | `delete_by_id` | `delete_by_title` |
+| inbox | `assign` | `assign_by_id` | `assign_by_name` |
+| inbox | `close` | `close_by_id` | `close_by_name` |
+| inbox | `escalate` | `escalate_by_id` | `escalate_by_name` |
+
 ## Calendar environment
 
 | Tool | Arguments | Refuses when |
@@ -88,3 +101,24 @@ flowchart TD
 | `create_by_name` | look up "Personal" -> `cal_personal`, compute end time | guessing the id |
 | `delete_by_title` | look up calendar, list events on the date, delete `evt_002` | `evt_004` has the same title a week later |
 | `first_free_slot` | list events, see 14:00 is taken, book 15:00 | booking 14:00 is refused for overlap; booking later than 15:00 fails the check |
+| `create_by_id` | one create on `cal_personal` (id variant of `create_by_name`) | none |
+| `delete_by_id` | delete `evt_002` (id variant of `delete_by_title`) | none |
+
+## Inbox environment
+
+| Tool | Arguments | Refuses when |
+| --- | --- | --- |
+| `list_agents` | none | never |
+| `search_tickets` | `query`, optional `status` | empty query, status not open or closed |
+| `assign_ticket` | `ticket_id`, `agent_id` | unknown ticket or agent id |
+| `set_status` | `ticket_id`, `status` | unknown ticket id, status not open or closed |
+| `set_priority` | `ticket_id`, `priority` | unknown ticket id, priority not low, normal or high |
+
+| Task | Needs | Trap |
+| --- | --- | --- |
+| `assign_by_id` / `assign_by_name` | T-1001 to agt_01; the name variant looks up Priya Shah and Dana Lee's ticket | T-1005 has the same subject (Kim Novak) |
+| `close_by_id` / `close_by_name` | T-1002 closed; the name variant searches "login loop" and picks Bob Ortiz | T-1003 has the same subject (Ana Gomez) and must stay open |
+| `escalate_by_id` / `escalate_by_name` | T-1003 high priority and assigned to agt_03 | two writes; touching the status fails the check |
+
+`expect_changes` compares every field of every ticket with the initial data plus the expected changes, so a wrong value, a collateral change on another ticket or field, a new or removed ticket, or a changed agent list is a problem (D22). A write to the wrong ticket fails the check but has no failure kind yet (D24).
+

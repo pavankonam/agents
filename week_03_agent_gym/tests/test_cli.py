@@ -43,3 +43,22 @@ def test_run_breakdown_flag_prints_rubric_tree(capsys):
     out = capsys.readouterr().out
     assert "PASS | reward 0.96" in out and "reward breakdown:" in out
     assert "1 refused step(s) -0.2" in out
+
+
+def test_list_shows_pairs_and_inbox(capsys):
+    assert main(["list", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)["tasks"]
+    by = {(r["env"], r["task"]): r for r in rows}
+    assert by[("inbox", "assign_by_name")]["pair"] == "assign"
+    assert by[("inbox", "assign_by_name")]["variant"] == "name"
+    assert by[("calendar", "create_explicit")]["pair"] == ""
+
+
+def test_run_env_prefix(capsys):
+    ok = FakeClient([LLMResponse(tool_calls=[ToolCall("set_status", {
+        "ticket_id": "T-1002", "status": "closed"})]), LLMResponse(tool_calls=[ToolCall(SUBMIT, {})])])
+    assert main(["run", "inbox/close_by_id"], client=ok) == 0
+    assert "PASS | reward 1.0" in capsys.readouterr().out
+    assert main(["run", "mars/close_by_id"]) == 2
+    assert main(["run", "inbox/close_by_id", "--env", "calendar"]) == 2
+    assert main(["run", "close_by_id"]) == 2  # default env is calendar

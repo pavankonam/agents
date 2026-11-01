@@ -113,3 +113,27 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** In `--fake` mode a reference run counts as passed only if it has no failures, and the messy control must produce exactly `wrong_tool` then `repeated_lookup` (or `extra_step` on `create_explicit`, whose reference has no lookup). Every run, fake or real, ends with a table of failure kinds per task with a total row.
 **Why:** Same idea as the controls in D12 and D16: prove the classifier fires on known mistakes and stays silent on a clean run. The table is the shape of the day 7 results.
+
+
+## D21. Paired task variants measure the id vs name gap (2026-11-01)
+
+**Decision:** `Task` gets `pair` and `variant` ("id" or "name"; both set or neither, checked in `__post_init__`). Two tasks with the same `pair` in one env do the same job and are checked against the same final state; the id variant names every target by id, the name variant only by names the agent must look up. `gap.paired_tasks` validates that each pair has exactly one of each, and `gap.id_name_gap(episodes, ENVIRONMENTS)` returns pass counts per pair, the id and name pass rates and `gap = id_rate - name_rate`. A pair enters the totals only when both variants ran. Calendar gains `create_by_id` (pairs with `create_by_name`) and `delete_by_id` (pairs with `delete_by_title`); `create_explicit` and `first_free_slot` stay unpaired.
+**Why:** Turing's Calendar Gym reported 89% with ids vs 41% with names. Comparing different tasks would mix the lookup effect with task difficulty; a pair holds the job constant. Counting only complete pairs stops `--only` from producing a fake gap out of one side.
+**Alternatives:** Generate the id variant automatically from the name variant's reference (the prompt still has to be written by hand, so nothing saved), compare tags ("explicit id" vs "name lookup") across all tasks (unequal jobs), report mean reward instead of pass rate (a messy correct run would shrink the gap for the wrong reason).
+
+## D22. Second environment: a support ticket inbox with a field level state check (2026-11-01)
+
+**Decision:** `InboxEnv` holds 3 agents and 5 tickets and offers `list_agents`, `search_tickets` (lookups) and `assign_ticket`, `set_status`, `set_priority` (writes). Unknown ticket or agent ids raise `UnknownIdError`; bad status or priority values raise `ToolError`. Its check, `expect_changes({ticket: {field: value}})`, compares every field of every ticket with the initial data plus the expected changes and reports wrong values, collateral changes, added or removed tickets and changed agents. The data has two same subject traps: "Login loop on mobile" for Bob Ortiz and Ana Gomez, "Refund not received" for Dana Lee and Kim Novak.
+**Why:** A second env with a different data model shows the base class, rubrics and failure taxonomy are not calendar specific (none of them needed a change). Tickets are a common real agent job and their targets are naturally named by people and subjects, which is exactly what the gap measures. The traps make the name variants need the customer, not only the subject. Updates instead of adds and deletes needed a field level check, so the calendar's `expect()` was not reused.
+**Alternatives:** A second calendar style env such as contacts (same shape, tests less), a generic diff based check shared by both envs (the calendar check compares events by content key because new ids are generated; the inbox compares by id; one function would hide that difference).
+
+## D23. quiz_model generalises the messy control and requires a zero gap in fake mode (2026-11-01)
+
+**Decision:** The messy control now repeats the env's first argument free read only tool (`list_calendars`, `list_agents`) instead of a hard coded `list_calendars`. Its expected second kind is `repeated_lookup` when the reference starts with that call and `extra_step` when the reference never uses it; any other placement raises, so a new task cannot make the control silently unpredictable. Every run prints the id vs name table after the failure table, and in `--fake` mode the run fails unless the gap is 0 (or n/a).
+**Why:** On the inbox env the old control would have called a tool that does not exist and produced `wrong_tool` twice. The scripted reference solves both variants by construction, so any fake gap means a pair is miswired.
+
+## D24. Known limit: a write to the wrong target has no failure kind (2026-11-01)
+
+**Decision:** Leave as is today and record it. Closing T-1003 instead of T-1002 in `close_by_name` fails the state check (reward 0, two problems) but `failures` is empty, because `classify` compares tools and order with the reference, not arguments (D18).
+**Why:** It is exactly the "right tool, wrong arguments" case, the most common one in Turing's study, so day 7 must not hide it. Fixing it needs a rule for when arguments differ in a way that matters (ids do, an optional `date` filter does not); that belongs with the day 5 trajectory work, where the reference arguments are recorded anyway. Until then the results table counts such runs as failed with problems.
+

@@ -102,7 +102,16 @@ TASKS = {t.id: t for t in [
                    Action("create_event", _ev("cal_personal", "Dentist", "2026-11-03",
                                               "15:00", "16:00"))],
         check=expect(added=[_ev("cal_personal", "Dentist", "2026-11-03", "15:00", "16:00")]),
-        tags=("create", "name lookup"),
+        tags=("create", "name lookup"), pair="dentist", variant="name",
+    ),
+    Task(
+        id="create_by_id",
+        prompt=("On calendar cal_personal, create an event titled 'Dentist' on 2026-11-03 "
+                "from 15:00 to 16:00."),
+        reference=[Action("create_event", _ev("cal_personal", "Dentist", "2026-11-03",
+                                              "15:00", "16:00"))],
+        check=expect(added=[_ev("cal_personal", "Dentist", "2026-11-03", "15:00", "16:00")]),
+        tags=("create", "explicit id"), pair="dentist", variant="id",
     ),
     Task(
         id="delete_by_title",
@@ -112,7 +121,15 @@ TASKS = {t.id: t for t in [
                    Action("list_events", {"calendar_id": "cal_team", "date": "2026-11-02"}),
                    Action("delete_event", {"event_id": "evt_002"})],
         check=expect(removed=["evt_002"]),
-        tags=("delete", "name lookup", "ambiguous title"),
+        tags=("delete", "name lookup", "ambiguous title"), pair="cancel_old_sync",
+        variant="name",
+    ),
+    Task(
+        id="delete_by_id",
+        prompt="Delete event evt_002. Leave everything else as it is.",
+        reference=[Action("delete_event", {"event_id": "evt_002"})],
+        check=expect(removed=["evt_002"]),
+        tags=("delete", "explicit id"), pair="cancel_old_sync", variant="id",
     ),
     Task(
         id="first_free_slot",

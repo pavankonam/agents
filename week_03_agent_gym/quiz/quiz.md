@@ -65,3 +65,23 @@ Answer: `wrong_arguments`. The schema accepts any string, the handler raises a p
 Verified: ran it on 2026-10-31: `True 0.96`, failure index 3 `create_event` `wrong_arguments`, reason `refused (tool_error)`. **PASS**
 
 Day 3 result: 4/4 PASS.
+
+## Day 4 (2026-11-01)
+
+**Q14. In `close_by_name` the model searches "login loop", then closes T-1003 instead of T-1002, and submits. Passed, reward, problems, failure kinds?**
+Answer: Not passed, reward 0.0 (gate). Two problems: T-1002 status is still open, and an unexpected change to T-1003 status. No failure kinds: the tools and their order match the reference, and `classify` does not compare arguments (D18), so the wrong target shows only as problems (D24).
+Verified: ran it on 2026-11-01: `False 0.0 ["T-1002 status is 'open', expected 'closed'", "unexpected change to T-1003 status: 'open' -> 'closed'"] []`. Test `test_close_wrong_same_subject_ticket_fails`. **PASS**
+
+**Q15. In `assign_by_name` the model skips both lookups and calls `assign_ticket(T-1001, agt_01)` straight away, then submits. Passed, reward, failures?**
+Answer: Passed, reward 1.0 (one accepted work step, below the reference of 3, nothing refused). One failure: `wrong_order` on step 1, reason "called before list_agents, search_tickets" (both missing prerequisites in one failure, each reported once). The guessed ids happen to be right; the failure makes the guess visible without lowering the reward (D19).
+Verified: ran it on 2026-11-01: `True 1.0 [{'index': 1, 'tool': 'assign_ticket', 'kind': 'wrong_order', 'reason': 'called before list_agents, search_tickets'}]`. Test `test_name_variant_with_guessed_ids_passes_but_shows_wrong_order`. **PASS**
+
+**Q16. What does the messy control produce on `close_by_name`, and what is its reward?**
+Answer: The noise lookup on the inbox env is `list_agents` (first argument free read only tool). `close_by_name`'s reference never uses it, so the kinds are `wrong_tool` (guess_id) then `extra_step`. Accepted work steps: list_agents, search_tickets, set_status = 3 vs a reference of 2, so 1 extra and 1 refused: trajectory 1 - 0.2 - 0.1 = 0.7, reward 0.8 + 0.2 x 0.7 = 0.94.
+Verified: ran it on 2026-11-01: `True 0.94 ['wrong_tool', 'extra_step']`. Test `test_messy_expected_per_env`. **PASS**
+
+**Q17. `python3 quiz/quiz_model.py --fake --only delete_by_title`: what does the gap table say, and why?**
+Answer: One row, `calendar/cancel_old_sync` with id 0/0 and name 1/1, marked "one variant only, not in total", and the last line ends with "gap n/a". `id_name_gap` adds a pair to the totals only when both variants ran (D21), so a filtered run cannot show a fake gap. The run still exits 0 because a fake gap of n/a is allowed (D23).
+Verified: test `test_only_filter_and_no_match` asserts "1/1 tasks passed", "one variant only, not in total" and "gap n/a" with exit 0. **PASS**
+
+Day 4 result: 4/4 PASS.
