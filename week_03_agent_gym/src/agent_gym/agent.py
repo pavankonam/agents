@@ -38,6 +38,8 @@ class Episode:
     turns: int = 0
     final_text: str = ""
     messages: list[dict] = field(default_factory=list)
+    seed: int | None = None  # data seed passed to reset, needed to replay (D25, D26)
+    max_steps: int = 20
 
     @property
     def success(self) -> bool:
@@ -57,14 +59,15 @@ def system_prompt(env: Environment) -> str:
 
 
 def run_episode(env: Environment, client: LLMClient, task_id: str | None = None,
-                max_turns: int = 12, episode_id: str | None = None) -> Episode:
+                max_turns: int = 12, episode_id: str | None = None,
+                seed: int | None = None) -> Episode:
     """Reset the env, loop model -> tool calls -> env.step until the episode ends.
 
     Ends when the model calls submit, the env hits its step limit, the model
     answers with text and no tool call (end reason no_submit), or max_turns
     model calls pass (turn_limit). The env scores the final state in all cases.
     """
-    obs = env.reset(task_id, episode_id=episode_id)
+    obs = env.reset(task_id, seed=seed, episode_id=episode_id)
     messages = [{"role": "system", "content": system_prompt(env)},
                 {"role": "user", "content": obs.content}]
     tools = env.tools()
@@ -100,4 +103,5 @@ def run_episode(env: Environment, client: LLMClient, task_id: str | None = None,
                    reward=st.reward if st.reward is not None else 0.0,
                    end_reason=st.end_reason, problems=st.problems, passed=st.passed,
                    breakdown=st.breakdown, failures=st.failures, steps=steps,
-                   turns=turns, final_text=final_text, messages=messages)
+                   turns=turns, final_text=final_text, messages=messages,
+                   seed=seed, max_steps=env.max_steps)

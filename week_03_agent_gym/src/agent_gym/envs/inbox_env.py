@@ -14,7 +14,7 @@ from __future__ import annotations
 import copy
 import json
 
-from ..env import Environment, Param, Task, ToolError, ToolSpec, UnknownIdError
+from ..env import Environment, Param, Task, ToolError, ToolSpec, UnknownIdError, seeded
 from ..types import Action
 
 SEED = {
@@ -142,8 +142,10 @@ class InboxEnv(Environment):
     tasks = TASKS
 
     def seed_data(self, seed: int | None) -> dict:
-        # seed is accepted for the OpenEnv shaped API; seeded data arrives on day 5.
-        return copy.deepcopy(SEED)
+        # A seed shuffles agents and tickets, so search results come back in another order (D25).
+        data = copy.deepcopy(SEED)
+        seeded(data, seed, ("agents", "tickets"))
+        return data
 
     def tool_specs(self) -> dict[str, ToolSpec]:
         tid = Param("string", "Ticket id, for example T-1001.")

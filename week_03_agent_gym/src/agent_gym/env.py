@@ -7,6 +7,7 @@ recorded steps, through the task's rubric (D13), never from what the agent says 
 from __future__ import annotations
 
 import copy
+import random
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -20,6 +21,21 @@ Check = Callable[[dict, dict], list[str]]
 TYPES = {"string": str, "integer": int}
 
 VARIANTS = ("", "id", "name")
+
+
+def seeded(data: dict, seed: int | None, keys: tuple[str, ...]) -> random.Random | None:
+    """Shuffle the lists under `keys` in place with Random(seed) (D25).
+
+    seed None leaves the canonical order and returns None. Otherwise returns the
+    generator so the env can draw more seeded values (for example an id offset).
+    Only order and generated ids vary: the task targets and checks stay valid.
+    """
+    if seed is None:
+        return None
+    rng = random.Random(seed)
+    for key in keys:
+        rng.shuffle(data[key])
+    return rng
 
 
 class EpisodeOver(RuntimeError):

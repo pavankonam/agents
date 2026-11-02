@@ -85,3 +85,23 @@ Answer: One row, `calendar/cancel_old_sync` with id 0/0 and name 1/1, marked "on
 Verified: test `test_only_filter_and_no_match` asserts "1/1 tasks passed", "one variant only, not in total" and "gap n/a" with exit 0. **PASS**
 
 Day 4 result: 4/4 PASS.
+
+## Day 5 (2026-11-02)
+
+**Q18. `create_by_name` is run with the reference on seed 2 and recorded; the record's seed is changed to 9 and replayed. Result, and which mismatch comes first?**
+Answer: Not ok, but reward still 1.0 (the outcome is the same). First mismatch is step 1 `list_calendars`, because the seed shuffles the calendar list; the second is step 2 `create_event`, because the seed also moves the new event id.
+Verified: ran it on 2026-11-02: `False 1.0`, mismatches start `step 1 list_calendars: observation differs` then `step 2 create_event: observation differs (recorded 'created evt_854', replayed 'created evt_988')`. Test `test_wrong_seed_first_mismatch_is_the_lookup`. **PASS**
+
+**Q19. `create_by_name` with `max_steps=3` and a model that calls `list_calendars` 5 times ends on `step_limit`. The last step is removed from the record and it is replayed. What does replay report?**
+Answer (first): one mismatch, "recorded end 'step_limit' but the replayed episode is still running"; replay then calls `finish(step_limit)`, reward 0.0 both times.
+Verified: ran it on 2026-11-02: two mismatches, the one above plus `failures: recorded ['repeated_lookup', 'repeated_lookup'], replayed ['repeated_lookup']`. The removed step was itself a repeated lookup, so the replayed failure kinds differ too. **FAIL**, fixed in the answer (D29): two mismatches, end and failures; reward 0.0. Test `test_truncated_step_limit_record_shows_end_and_failure_diff`. Re-verified: **PASS**
+
+**Q20. The model answers "All set" without a tool call on `close_by_name`. What is recorded, and how does replay reach the same end?**
+Answer: End `no_submit`, reward 0.0, zero steps. Replay steps nothing, sees the env still running and, since `no_submit` is not an end the env produces itself, calls `finish("no_submit")` (D27). Same reward, ok.
+Verified: ran it on 2026-11-02: `no_submit 0.0 0 True 0.0`. Test `test_replay_reproduces_every_end_reason`. **PASS**
+
+**Q21. On seeds 1, 2 and 3 the inbox tickets come back in a different order. Why does the `close_by_name` reference still pass clean?**
+Answer: `seeded` only reorders lists (D25). The reference closes `T-1002` by id, `expect_changes` compares tickets by id, and `classify` compares tools and order, not list positions, so neither the check nor the failure kinds depend on order.
+Verified: ran it on 2026-11-02: ticket orders `T-1004, T-1005, T-1002, ...` (seed 1), `T-1004, T-1002, ...` (seed 2), `T-1002, T-1001, ...` (seed 3); quiz_model `--fake` runs every reference on seeds 1 to 3: "72/72 controls behaved as expected". Test `test_every_reference_passes_clean_on_many_seeds` (25 seeds). **PASS**
+
+Day 5 result: 3/4 PASS on first answer, 1 FAIL fixed (Q19), 4/4 PASS after the fix.

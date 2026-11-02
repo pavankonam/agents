@@ -19,12 +19,19 @@ ends with a per kind failure table across all tasks (D20). Then a table of the
 paired tasks (same job, explicit ids vs names to look up) with pass rates per
 variant and the id vs name gap (D21); in --fake mode the gap must be 0 (D23).
 
+Every episode is turned into a trajectory record, sent through JSON and
+replayed on a fresh env; the replay must reproduce the observations, reward,
+passed, problems and failure kinds (D26). In --fake mode each reference is also
+run on seeded data (seed 1 to 3) and must pass with no failures (D28).
+--record PATH appends the main runs (not the controls) to a JSONL file.
+
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -36,7 +43,15 @@ from agent_gym.failures import KINDS, summarize  # noqa: E402
 from agent_gym.gap import gap_lines, id_name_gap  # noqa: E402
 from agent_gym.llm import (DEFAULT_MODEL, FakeClient, LLMResponse, OllamaClient,  # noqa: E402
                            ToolCall, check_ollama)
+from agent_gym.trajectory import replay, to_record, write_jsonl  # noqa: E402
 from agent_gym.types import SUBMIT  # noqa: E402
+
+SEEDS = (1, 2, 3)
+
+
+def replays_same(ep) -> list[str]:
+    """Round trip the episode through JSON and replay it; returns the mismatches (D26)."""
+    return replay(json.loads(json.dumps(to_record(ep)))).mismatches
 
 
 def reference_script(task) -> list[LLMResponse]:
@@ -96,7 +111,8 @@ def scenarios(only: str | None):
                 yield name, cls, task
 
 
-def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama) -> int:
+def run(fake: bool, model: str | None, only: str | None = None, check=check_ollama,
+        record: str | None = None) -> int:
     model = model or DEFAULT_MODEL
     if not fake:
         ok, msg = check(model)
@@ -111,6 +127,17 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     controls_ok = 0
     controls_run = 0
     episodes = []
+    replayed = 0
+    replay_bad = 0
+
+    def check_replay(ep, label: str) -> None:
+        nonlocal replayed, replay_bad
+        replayed += 1
+        bad = replays_same(ep)
+        if bad:
+            replay_bad += 1
+            print(f"FAIL replay of {label}: {bad[0]}")
+
     for name, cls, task in chosen:
         client = FakeClient(reference_script(task)) if fake else OllamaClient(model=model)
         ep = run_episode(cls(), client, task.id)
@@ -124,14 +151,26 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
             print(f"     problem: {p}")
         for f in ep.failures:
             print(f"     failure: step {f['index']} {f['tool']}: {f['kind']}")
+        check_replay(ep, name)
         if fake:
+            for seed in SEEDS:
+                s = run_episode(cls(), FakeClient(reference_script(task)), task.id, seed=seed)
+                controls_run += 1
+                seeded_ok = s.success and not s.failures
+                controls_ok += seeded_ok
+                check_replay(s, f"{name} seed {seed}")
+                if not seeded_ok:
+                    print(f"FAIL reference on seed {seed} for {name}: problems {s.problems}, "
+                          f"failures {[f['kind'] for f in s.failures]}")
             for label, script in CONTROLS.items():
                 c = run_episode(cls(), FakeClient(script()), task.id)
+                check_replay(c, f"control '{label}' on {name}")
                 controls_run += 1
                 controls_ok += c.reward == 0.0
                 if c.reward != 0.0:
                     print(f"FAIL control '{label}' scored {c.reward} on {name}")
             m = run_episode(cls(), FakeClient(messy_script(task, cls)), task.id)
+            check_replay(m, f"messy control on {name}")
             controls_run += 1
             kinds = [f["kind"] for f in m.failures]
             messy_ok = m.success and 0.0 < m.reward < 1.0 and kinds == messy_expected(task, cls)
@@ -150,12 +189,17 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     gap_ok = not fake or gap["gap"] in (None, 0.0)
     if not gap_ok:
         print(f"FAIL fake run shows an id vs name gap of {gap['gap']}")
+    if record:
+        n = write_jsonl(record, episodes, model="fake" if fake else model)
+        print(f"\nrecorded {n} episodes to {record}")
     print(f"\n{passed}/{len(chosen)} tasks passed ({'fake' if fake else model})")
+    print(f"{replayed - replay_bad}/{replayed} episodes replayed with the same result")
     if fake:
         print(f"{controls_ok}/{controls_run} controls behaved as expected "
               "(do nothing scores 0, messy but correct passes below 1.0 "
-              "with the expected failure kinds)")
-    return 0 if passed == len(chosen) and controls_ok == controls_run and gap_ok else 1
+              "with the expected failure kinds, seeded references pass clean)")
+    return 0 if (passed == len(chosen) and controls_ok == controls_run and gap_ok
+                 and not replay_bad) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,8 +207,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fake", action="store_true", help="scripted model, no Ollama")
     ap.add_argument("--model", default=None)
     ap.add_argument("--only", default=None, help="run tasks whose name contains this text")
+    ap.add_argument("--record", default=None, metavar="PATH",
+                    help="append the main runs to this JSONL file")
     a = ap.parse_args(argv)
-    return run(a.fake, a.model, a.only)
+    return run(a.fake, a.model, a.only, record=a.record)
 
 
 if __name__ == "__main__":

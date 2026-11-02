@@ -1,3 +1,4 @@
+import json
 import importlib.util
 from pathlib import Path
 
@@ -10,7 +11,8 @@ spec.loader.exec_module(quiz_model)
 def test_fake_quiz_passes(capsys):
     assert quiz_model.run(fake=True, model=None) == 0
     out = capsys.readouterr().out
-    assert "12/12 tasks passed" in out and "36/36 controls" in out
+    assert "12/12 tasks passed" in out and "72/72 controls" in out
+    assert "84/84 episodes replayed with the same result" in out
     assert "id vs name pairs" in out and "gap +0 points" in out
     assert "failure kinds per task" in out and "with the expected failure kinds" in out
 
@@ -42,3 +44,11 @@ def test_messy_expected_per_env():
         "wrong_tool", "repeated_lookup"]
     assert quiz_model.messy_expected(inbox.tasks["close_by_name"], inbox) == [
         "wrong_tool", "extra_step"]
+
+
+def test_record_writes_main_runs_only(tmp_path, capsys):
+    path = tmp_path / "fake.jsonl"
+    assert quiz_model.run(fake=True, model=None, only="inbox/", record=str(path)) == 0
+    lines = path.read_text().splitlines()
+    assert len(lines) == 6 and "recorded 6 episodes" in capsys.readouterr().out
+    assert {json.loads(x)["meta"]["model"] for x in lines} == {"fake"}

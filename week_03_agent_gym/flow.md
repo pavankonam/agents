@@ -1,12 +1,12 @@
 # Flow: Agent Gym
 
-Status: **Day 4**. Every solid box exists in the code. The dashed part (trajectories) arrives on day 5.
+Status: **Day 5**. Every box exists in the code. `eval` and `report` in the CLI arrive on day 6.
 
 ```mermaid
 flowchart TD
-    CLI[python3 -m agent_gym<br/>list shows pairs, run ENV/TASK --breakdown<br/>prints failure kinds] --> RE
-    QM[quiz/quiz_model.py<br/>reference runs, zero score controls,<br/>messy but correct control,<br/>failure table per task,<br/>id vs name gap table] --> RE
-    RE[run_episode<br/>agent.py] -->|reset task_id| ENV[Environment.reset<br/>CalendarEnv or InboxEnv<br/>seed_data copied, State new]
+    CLI[python3 -m agent_gym<br/>list shows pairs, run ENV/TASK --breakdown<br/>--seed N --record PATH,<br/>prints failure kinds] --> RE
+    QM[quiz/quiz_model.py<br/>reference runs, zero score controls,<br/>messy but correct control,<br/>failure table per task,<br/>id vs name gap table,<br/>seeded reference runs,<br/>replay of every episode] --> RE
+    RE[run_episode<br/>agent.py] -->|reset task_id, seed| ENV[Environment.reset<br/>CalendarEnv or InboxEnv<br/>seed_data copied, State new<br/>seed: lists shuffled, new ids moved]
     ENV -->|Observation: task prompt| RE
     RE --> SP[system prompt: env name,<br/>description, max steps, submit rule]
     SP --> M[LLM client.chat<br/>OllamaClient or FakeClient<br/>tools: env tools + submit]
@@ -39,7 +39,12 @@ flowchart TD
     RW --> EP[Episode: steps, reward, passed,<br/>breakdown, failures, end_reason, problems, turns]
     EP --> SUM[summarize: counts per task and total]
     EP --> GAP[gap.id_name_gap: paired tasks,<br/>pass rate id vs name, gap]
-    EP -.->|day 5| TR[JSONL trajectory, replay]
+    EP --> TR[trajectory.to_record<br/>env, task, seed, max_steps, end_reason,<br/>actions + observations, reward, passed,<br/>problems, failure kinds]
+    TR --> JL[(JSONL file<br/>run --record, quiz --record)]
+    JL --> RP[replay: fresh env, same task and seed,<br/>step the actions, finish with the recorded<br/>end reason if the env is still running]
+    RP --> CMP{observations, end, reward,<br/>passed, problems, failures equal?}
+    CMP -->|yes| SAME[SAME, exit 0]
+    CMP -->|no| DIFF[DIFF with each mismatch, exit 1]
 ```
 
 ## How it works
@@ -52,6 +57,8 @@ flowchart TD
 6. On every end the env builds a `RubricContext` and scores it with the task's rubric (D13). The default (D14) is a `Gate` on the state check: if the final data does not have exactly the expected changes and nothing else (D7, D9), reward is 0. Otherwise reward is 0.8 x outcome + 0.2 x trajectory, where the trajectory loses 0.2 per refused step and 0.1 per accepted step beyond the reference solution (submit not counted).
 7. After scoring, `failures.classify` gives every refused or wasted step one failure kind (D18). Refused steps take theirs from the env's `error_kind` (D17). Accepted steps are compared with the task reference: an identical repeated lookup, a tool the reference does not use, more calls than the reference, or a call made before a reference prerequisite. The kinds are stored as `failures` and never change the reward (D19).
 8. `passed` means the state check found no problems; `success` follows it, so a correct but messy run passes with a reward below 1.0 (D15). The full rubric tree is kept as `breakdown`. The agent never sees reward, breakdown or problems (D8).
+9. `reset(task, seed=N)` shuffles the env's lists (calendars and events, agents and tickets) with `Random(N)` and, on the calendar, moves the first new event id to `evt_101` to `evt_1000` (D25). No seed means the canonical data. Ids, contents and checks are unchanged, so a reference passes on every seed, but an agent that picks "the first result" or guesses `evt_101` no longer gets lucky.
+10. `trajectory.to_record` turns an `Episode` into one JSON line; `replay` rebuilds the episode from the line alone, without the model, and lists every difference (D26, D27). The quiz replays all 84 fake episodes on every run.
 
 ## Reward examples (default rubric)
 

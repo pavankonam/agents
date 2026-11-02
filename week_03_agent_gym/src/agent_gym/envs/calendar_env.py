@@ -12,7 +12,7 @@ import datetime as dt
 import json
 import re
 
-from ..env import Environment, Param, Task, ToolError, ToolSpec, UnknownIdError
+from ..env import Environment, Param, Task, ToolError, ToolSpec, UnknownIdError, seeded
 from ..types import Action
 
 SEED = {
@@ -152,9 +152,11 @@ class CalendarEnv(Environment):
     tasks = TASKS
 
     def seed_data(self, seed: int | None) -> dict:
-        # seed is accepted for the OpenEnv shaped API; day 1 data is fixed.
-        self._next_id = 101
-        return copy.deepcopy(SEED)
+        # A seed shuffles calendars and events and moves the first new event id (D25).
+        data = copy.deepcopy(SEED)
+        rng = seeded(data, seed, ("calendars", "events"))
+        self._next_id = 101 if rng is None else 101 + rng.randrange(900)
+        return data
 
     def tool_specs(self) -> dict[str, ToolSpec]:
         return {s.name: s for s in [

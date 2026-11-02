@@ -1,4 +1,5 @@
-"""CLI so far: `list` tasks and `run` one episode (reward breakdown, failure kinds). Full CLI is day 6.
+"""CLI so far: `list` tasks, `run` one episode (reward breakdown, failure kinds, --seed,
+--record to JSONL) and `replay` a JSONL file (D26). `eval` and `report` are day 6.
 
 A task can be named `env/task` (for example `inbox/assign_by_name`) instead of using --env.
 """
@@ -11,6 +12,7 @@ import json
 from .agent import run_episode
 from .envs import ENVIRONMENTS
 from .llm import DEFAULT_MODEL, OllamaClient, check_ollama
+from .trajectory import TrajectoryError, read_jsonl, replay, write_jsonl
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_OLLAMA = 0, 1, 2, 4
 
@@ -28,7 +30,35 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--max-steps", type=int, default=20)
     run.add_argument("--json", action="store_true")
     run.add_argument("--breakdown", action="store_true", help="print the rubric tree")
+    run.add_argument("--seed", type=int, default=None,
+                     help="shuffle the env data with this seed (default: canonical order)")
+    run.add_argument("--record", default=None, metavar="PATH",
+                     help="append the episode to this JSONL file")
+    rp = sub.add_parser("replay", help="re-run recorded episodes and check they score the same")
+    rp.add_argument("path", help="JSONL file written by run --record")
+    rp.add_argument("--json", action="store_true")
     return p
+
+
+def replay_file(path: str, as_json: bool) -> int:
+    try:
+        records = read_jsonl(path)
+        results = [replay(r) for r in records]
+    except (OSError, TrajectoryError) as exc:
+        print(f"PROBLEM: {exc}")
+        return EXIT_USAGE
+    if as_json:
+        print(json.dumps({"replayed": len(results), "ok": sum(r.ok for r in results),
+                          "results": [{"env": r.env, "task": r.task_id, "reward": r.reward,
+                                       "passed": r.passed, "mismatches": r.mismatches}
+                                      for r in results]}, indent=2))
+    else:
+        for i, r in enumerate(results, 1):
+            print(f"{i:>3}. {'SAME' if r.ok else 'DIFF'} {r.env}/{r.task_id} reward {r.reward:.3f}")
+            for m in r.mismatches:
+                print(f"       {m}")
+        print(f"{sum(r.ok for r in results)}/{len(results)} episodes replayed with the same result")
+    return EXIT_OK if all(r.ok for r in results) else EXIT_FAILED
 
 
 def breakdown_lines(node: dict, indent: int = 0) -> list[str]:
@@ -58,6 +88,8 @@ def main(argv: list[str], client=None, check=check_ollama) -> int:
                 print(f"{r['env']}/{r['task']:<18} [{', '.join(r['tags'])}]{pair}\n"
                       f"    {r['prompt']}")
         return EXIT_OK
+    if args.command == "replay":
+        return replay_file(args.path, args.json)
     env_name, task_id = args.env, args.task
     if "/" in task_id:
         prefix, task_id = task_id.split("/", 1)
@@ -80,7 +112,9 @@ def main(argv: list[str], client=None, check=check_ollama) -> int:
             print(f"PROBLEM: {msg}")
             return EXIT_OLLAMA
         client = OllamaClient(model=args.model)
-    ep = run_episode(env_cls(max_steps=args.max_steps), client, args.task)
+    ep = run_episode(env_cls(max_steps=args.max_steps), client, args.task, seed=args.seed)
+    if args.record:
+        write_jsonl(args.record, [ep], model=getattr(client, "model", "fake"))
     if args.json:
         print(json.dumps(ep.to_dict(), indent=2))
     else:

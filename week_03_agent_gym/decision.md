@@ -137,3 +137,30 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Decision:** Leave as is today and record it. Closing T-1003 instead of T-1002 in `close_by_name` fails the state check (reward 0, two problems) but `failures` is empty, because `classify` compares tools and order with the reference, not arguments (D18).
 **Why:** It is exactly the "right tool, wrong arguments" case, the most common one in Turing's study, so day 7 must not hide it. Fixing it needs a rule for when arguments differ in a way that matters (ids do, an optional `date` filter does not); that belongs with the day 5 trajectory work, where the reference arguments are recorded anyway. Until then the results table counts such runs as failed with problems.
 
+
+## D25. Seeded data shuffles order and moves generated ids, nothing else (2026-11-02)
+
+**Decision:** `env.seeded(data, seed, keys)` shuffles the named lists in place with `random.Random(seed)` and returns the generator; `seed=None` keeps the canonical data. The calendar shuffles calendars and events and starts new event ids at `101 + randrange(900)`; the inbox shuffles agents and tickets. Ids, contents and task checks do not change.
+**Why:** With fixed data a model can pass by picking the first search result or by guessing `evt_101`, and repeated runs of one task test the same thing. Order and generated ids are exactly what an agent should not rely on, and varying only them keeps every task, reference and state check valid (a test runs every reference on 25 seeds). A local `Random` keeps runs reproducible and leaves the global generator alone.
+**Alternatives:** Random names and dates per seed (references and prompts would have to be generated, too much for one day and harder to read), random ticket ids (the id variants of the pairs would have to be rewritten per seed), `random.seed()` globally (leaks between episodes and tests).
+
+## D26. A trajectory record is the episode without the model, and replay checks everything the env produced (2026-11-02)
+
+**Decision:** `trajectory.to_record(ep)` writes one JSON object: `format`, env, task, episode id, seed, max_steps, end reason, reward, passed, problems, failure kinds, every step (tool, arguments, ok, observation text) and a free `meta` (model name). `replay(record)` builds a fresh env with the same max_steps, resets the same task and seed, steps the recorded actions and reports a mismatch for any differing observation, the end reason, reward (within 1e-9), passed, problems and failure kinds. `ReplayResult.ok` means no mismatches. The CLI gets `run --seed --record PATH` (append) and `replay PATH` (exit 0 all same, 1 any differs, 2 unreadable); quiz_model replays every episode it runs and takes `--record`. Model messages are not stored.
+**Why:** The PRD asks that a recorded run reproduces its reward. Checking only the reward would miss a changed env that happens to score the same, so every observation is compared too. A record that replays is the evidence behind a result: the day 7 table can be rechecked from files without running Ollama again. Messages are model specific, large and not needed to rebuild the env.
+**Alternatives:** Pickle the `Episode` (not readable, breaks across code changes), store the full data snapshot instead of actions (bigger, and it would not prove the env still produces the same result), compare only the reward (weaker, see above).
+
+## D27. Replay ends the episode the way it was ended (2026-11-02)
+
+**Decision:** `submitted` and `step_limit` end inside `env.step`, so replaying the steps must end the episode by itself; if it does not, that is a mismatch ("still running"). `no_submit` and `turn_limit` are ended by the agent loop calling `finish`, so replay calls `finish(end_reason)` when the env is still running after the last step. A record whose episode ends before its last step reports "episode ended before step N".
+**Why:** The env cannot know about the agent loop's end reasons, and the reward depends on the end reason through the rubric context, so replay must use the recorded one, but only where the env could not have produced it itself.
+
+## D28. quiz_model counts seeded reference runs with the controls (2026-11-02)
+
+**Decision:** In `--fake` mode each task's reference also runs on seeds 1, 2 and 3 and must pass with no failure kinds; these 36 runs count in the controls line (now 72/72). Every fake episode (84 in all) is replayed and the run fails on any mismatch.
+**Why:** Same idea as D12 and D16: prove the new feature on known inputs every run. A separate counter would add a fourth summary line for one check.
+
+## D29. Quiz Q19 answer was incomplete: a truncated record also changes the failure kinds (2026-11-02)
+
+**Decision:** Code unchanged; the quiz answer and a test were fixed. Dropping the last step of a `step_limit` episode gives two mismatches, "still running" and the failure kinds (one fewer `repeated_lookup`), not one.
+**Why:** Failures are recomputed from the replayed steps, which is the point of comparing them; the first answer forgot that the dropped step was itself a classified failure. Test `test_truncated_step_limit_record_shows_end_and_failure_diff` pins it.
