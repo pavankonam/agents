@@ -25,6 +25,13 @@ passed, problems and failure kinds (D26). In --fake mode each reference is also
 run on seeded data (seed 1 to 3) and must pass with no failures (D28).
 --record PATH appends the main runs (not the controls) to a JSONL file.
 
+In --fake mode two day 6 checks also count as controls. A wrong target control
+plays the reference but points one write at a look alike object (T-1003 for
+T-1002, evt_004 for evt_002, agt_02 for agt_01): it must fail with exactly one
+failure kind, wrong_target (D30). And an eval of every reference on seeds 1 and
+2 is written to JSONL and read back: the report rebuilt from the file must equal
+the live one, with every run passed and no failure kinds (D31, D32).
+
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
 
@@ -39,11 +46,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_gym.agent import run_episode  # noqa: E402
 from agent_gym.envs import ENVIRONMENTS  # noqa: E402
+from agent_gym.evaluate import build_report, run_eval, select_tasks  # noqa: E402
 from agent_gym.failures import KINDS, summarize  # noqa: E402
 from agent_gym.gap import gap_lines, id_name_gap  # noqa: E402
 from agent_gym.llm import (DEFAULT_MODEL, FakeClient, LLMResponse, OllamaClient,  # noqa: E402
                            ToolCall, check_ollama)
-from agent_gym.trajectory import replay, to_record, write_jsonl  # noqa: E402
+from agent_gym.trajectory import read_jsonl, replay, to_record, write_jsonl  # noqa: E402
 from agent_gym.types import SUBMIT  # noqa: E402
 
 SEEDS = (1, 2, 3)
@@ -86,6 +94,47 @@ def messy_expected(task, cls) -> list[str]:
         raise ValueError(f"{task.id}: the reference uses {lookup} but not first; "
                          "the messy control would not be predictable")
     return ["wrong_tool", "extra_step"]
+
+
+# (env, task) -> (tool, id argument, look alike value): same tool, wrong object (D30).
+WRONG_TARGET = {
+    ("inbox", "close_by_name"): ("set_status", "ticket_id", "T-1003"),
+    ("inbox", "assign_by_name"): ("assign_ticket", "agent_id", "agt_02"),
+    ("calendar", "delete_by_title"): ("delete_event", "event_id", "evt_004"),
+}
+
+
+def wrong_target_script(task, tool: str, key: str, value: str) -> list[LLMResponse]:
+    """The reference, with `key` of the first `tool` call replaced by `value`."""
+    out, done = [], False
+    for r in reference_script(task):
+        tc = r.tool_calls[0]
+        args = dict(tc.arguments)
+        if not done and tc.name == tool:
+            args[key], done = value, True
+        out.append(LLMResponse(tool_calls=[ToolCall(tc.name, args)]))
+    if not done:
+        raise ValueError(f"{task.id}: reference has no {tool} call")
+    return out
+
+
+def eval_round_trip(only: str | None) -> list[str]:
+    """Eval the references on seeds 1 and 2, write JSONL, rebuild the report; problems found."""
+    import tempfile
+    chosen = select_tasks(ENVIRONMENTS, only=only)
+    eps = run_eval(chosen, lambda env, task: FakeClient(reference_script(task)), [1, 2])
+    live = build_report(eps, ENVIRONMENTS)
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "eval.jsonl"
+        write_jsonl(path, eps, model="fake")
+        again = build_report(read_jsonl(path), ENVIRONMENTS)
+    bad = []
+    if again != live:
+        bad.append("report rebuilt from JSONL differs from the live report")
+    if live["passed"] != live["runs"] or any(live["failures"].values()):
+        bad.append(f"eval of references: {live['passed']}/{live['runs']} passed, "
+                   f"failures {live['failures']}")
+    return bad
 
 
 def failure_table(episodes) -> list[str]:
@@ -178,6 +227,27 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
             if not messy_ok:
                 print(f"FAIL control 'messy but correct' on {name}: passed {m.success}, "
                       f"reward {m.reward}, failures {kinds}")
+    if fake:
+        for (env_name, task_id), (tool, key, value) in WRONG_TARGET.items():
+            name = f"{env_name}/{task_id}"
+            if only and only.lower() not in name.lower():
+                continue
+            cls = ENVIRONMENTS[env_name]
+            w = run_episode(cls(), FakeClient(wrong_target_script(cls.tasks[task_id], tool, key,
+                                                                  value)), task_id)
+            check_replay(w, f"wrong target control on {name}")
+            controls_run += 1
+            kinds = [f["kind"] for f in w.failures]
+            wt_ok = not w.passed and w.reward == 0.0 and kinds == ["wrong_target"]
+            controls_ok += wt_ok
+            if not wt_ok:
+                print(f"FAIL control 'wrong target' on {name}: passed {w.passed}, "
+                      f"reward {w.reward}, failures {kinds}")
+        controls_run += 1
+        problems = eval_round_trip(only)
+        controls_ok += not problems
+        for p in problems:
+            print(f"FAIL eval round trip: {p}")
     print("\nfailure kinds per task (" + ("reference runs" if fake else model) + "):")
     for line in failure_table(episodes):
         print("  " + line)
@@ -197,7 +267,8 @@ def run(fake: bool, model: str | None, only: str | None = None, check=check_olla
     if fake:
         print(f"{controls_ok}/{controls_run} controls behaved as expected "
               "(do nothing scores 0, messy but correct passes below 1.0 "
-              "with the expected failure kinds, seeded references pass clean)")
+              "with the expected failure kinds, seeded references pass clean, "
+              "wrong target controls fail as wrong_target, eval report survives JSONL)")
     return 0 if (passed == len(chosen) and controls_ok == controls_run and gap_ok
                  and not replay_bad) else 1
 

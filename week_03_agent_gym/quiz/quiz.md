@@ -105,3 +105,23 @@ Answer: `seeded` only reorders lists (D25). The reference closes `T-1002` by id,
 Verified: ran it on 2026-11-02: ticket orders `T-1004, T-1005, T-1002, ...` (seed 1), `T-1004, T-1002, ...` (seed 2), `T-1002, T-1001, ...` (seed 3); quiz_model `--fake` runs every reference on seeds 1 to 3: "72/72 controls behaved as expected". Test `test_every_reference_passes_clean_on_many_seeds` (25 seeds). **PASS**
 
 Day 5 result: 3/4 PASS on first answer, 1 FAIL fixed (Q19), 4/4 PASS after the fix.
+
+## Day 6 (2026-11-03)
+
+**Q22. In `delete_by_title` the model looks up the calendar, lists Team events without a date, deletes `evt_004`, then deletes `evt_002` and submits. Passed, reward, failure kinds?**
+Answer: Not passed, reward 0.0 (gate): one problem, the unexpected deletion of `evt_004`. One failure only: step 3 `delete_event` is `wrong_target` (event_id evt_004, reference evt_002). Step 4 is not an `extra_step`, because a wrong target call does not use up the reference's one `delete_event` (D30), and the dateless `list_events` is fine because `date` is not an id argument.
+Verified: ran it on 2026-11-03: `False 0.0 [(3, 'wrong_target')] ["unexpected deletion: evt_004 ('Old sync' on cal_team 2026-11-09 14:00-15:00)"]`. Test `test_wrong_target_does_not_use_up_the_reference_call`. **PASS**
+
+**Q23. In `first_free_slot` the model books the Retro at 14:00 on `cal_team` and submits. Is that a `wrong_target`?**
+Answer: No. 14:00 overlaps "Old sync", so the env refuses the create with a `ToolError` and the kind is `wrong_arguments` (refused, tool_error). Even if the env had accepted a wrong time, `calendar_id` matches the reference and times are not id arguments, so it would never be `wrong_target`; the missing event shows as a problem, reward 0.0.
+Verified: ran it on 2026-11-03: `False 0.0`, failure index 3 `create_event` `wrong_arguments` reason `refused (tool_error)`, problem `missing event: 'Retro' on cal_team 2026-11-02 15:00-16:00`. Test `test_non_id_arguments_never_make_a_wrong_target`. **PASS**
+
+**Q24. `python3 -m agent_gym eval --env inbox --repeats 2`: which seeds, how many episodes, and what happens when Ollama is not running?**
+Answer: Seeds 1 and 2 (`eval_seeds(2, None)` counts up from 1), 6 inbox tasks x 2 = 12 episodes. With Ollama down the check runs before any episode: it prints `PROBLEM: ...` and exits 4.
+Verified: test `test_cli_eval_pass_json_and_record` (12 runs, seeds `[1, 2]`) and `test_cli_eval_usage_and_ollama` (exit 4); ran `eval --env inbox --model nonexist:1b` on the Mac on 2026-11-03 with Ollama off: `PROBLEM: Ollama is not reachable ...`. **PASS**
+
+**Q25. `report` on a JSONL file that holds only a blank line, on a missing file, and on a record without `task_id`: exit codes?**
+Answer: 3 (no records: nothing to report), 2 (cannot read), 2 (bad record field). Exit 1 is kept for runs that actually failed (D33).
+Verified: test `test_cli_report_exit_codes` covers all three; `report /nonexistent` exited 2 on 2026-11-03. **PASS**
+
+Day 6 result: 4/4 PASS.

@@ -164,3 +164,26 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** Code unchanged; the quiz answer and a test were fixed. Dropping the last step of a `step_limit` episode gives two mismatches, "still running" and the failure kinds (one fewer `repeated_lookup`), not one.
 **Why:** Failures are recomputed from the replayed steps, which is the point of comparing them; the first answer forgot that the dropped step was itself a classified failure. Test `test_truncated_step_limit_record_shows_end_and_failure_diff` pins it.
+
+## D30. A write to the wrong object is `wrong_target`, judged on id arguments only (2026-11-03)
+
+**Decision:** Seventh failure kind `wrong_target`, placed after `wrong_arguments` in `KINDS`. An accepted call of a write tool that the reference also uses is `wrong_target` when its id arguments (named `id` or ending in `_id`) match no reference call of that tool; the reason names both, for example `ticket_id=T-1003, reference ticket_id=T-1002`. The check runs after `repeated_lookup` and `wrong_tool` and before the reference count, and a wrong target call does not use up one of the reference's calls of the tool, so "wrong ticket, then the right one" gives one `wrong_target`, not also an `extra_step`. Read only tools and non id arguments are never judged this way. This closes D24.
+**Why:** The PRD success criterion says every failure on the real model needs a kind, and "right tool, wrong arguments" is the biggest bucket in Turing's study (51%). Ids are the arguments that pick the object; times, titles and filters can differ for harmless reasons (a lookup without the optional date, a create at the wrong hour that the state check already catches), so judging them would turn correct runs into failures. Leaving the bad call out of the reference count stops one mistake from being reported twice.
+**Alternatives:** Compare all arguments with the reference (flags a missing optional `date` filter, D24 rejects that), derive the kind from the state check problems (env specific text, and problems describe the outcome, not a step), call it `wrong_arguments` (that kind means the env refused the call; here the env accepted it and the damage only shows in the final state).
+
+## D31. `eval` runs every chosen task once per seed; more than one repeat means seeded data (2026-11-03)
+
+**Decision:** `eval [--env E] [--only TEXT] [--repeats N] [--seed S]` runs each matching task once per seed from `eval_seeds`: one repeat and no seed is the canonical data (`[None]`), otherwise N seeds counting up from S (default 1). One client serves all episodes (the Ollama client is stateless per chat); `main(..., client_factory=)` lets tests give each task its own scripted client. Each episode prints one line as it ends, then the report. `--record` appends every episode to JSONL.
+**Why:** Repeating a task on the same data would mostly measure sampling noise; the day 5 seeds exist so repeats test something new (other list orders, other new event ids) while staying reproducible. Canonical data for a single run keeps `eval` comparable with `run` and the quiz.
+**Alternatives:** Repeats on the canonical data with `--seed` optional (repeats would look alike), random seeds (not reproducible), threads for parallel runs (a single local model gains little and output would interleave).
+
+## D32. One report for live runs and for JSONL files (2026-11-03)
+
+**Decision:** `evaluate.build_report` takes episodes or trajectory records (both normalised to a `Row`) and returns runs, passed, pass rate, mean reward, seeds, per task rows with failure counts for all seven kinds, the total failure counts, `failed_runs_without_kind` and the id vs name gap. `report PATH` rebuilds it from a JSONL file without a model. The quiz checks that the report from a written and re read file equals the live one.
+**Why:** The day 7 table must be reproducible from files, so the file report and the live report have to be the same function, not two that drift. `failed_runs_without_kind` makes the PRD criterion ("every failure has a kind") a number on the table; a run that only answers in text still counts there, because doing nothing is a failure of outcome with no wrong step to name.
+
+## D33. One exit code table for every command (2026-11-03)
+
+**Decision:** 0 everything passed (or replayed the same), 1 something ran but failed (or differs), 2 usage (bad arguments, unknown env or task, a filter that matches nothing, an unreadable or invalid JSONL file), 3 nothing to report (a JSONL file with no records), 4 Ollama not ready. Listed in the `cli.py` docstring and the README, pinned by `test_exit_codes_are_fixed`.
+**Why:** The PRD asks for fixed exit codes so that `eval` and `report` can gate a script or CI job. An empty file is neither a pass nor a failure, so it gets its own code instead of a misleading 0.
+**Alternatives:** Exit 1 for any problem (a script cannot tell a broken setup from a failed model), 0 for an empty report (hides a recording that never happened).

@@ -15,6 +15,9 @@ Accepted steps, checked against the task's reference solution, first match wins:
 
     repeated_lookup  a read only call identical (tool and arguments) to an earlier accepted one
     wrong_tool       a write tool that the reference never uses
+    wrong_target     a write tool the reference uses, but pointed at other ids: its id
+                     arguments (`id` or ending in `_id`) match no reference call of that
+                     tool (D30). It does not use up the reference's calls of the tool.
     extra_step       a read only tool the reference never uses, or more accepted calls of
                      a tool than the reference makes
     wrong_order      the reference calls other tools before this one and at least one of
@@ -33,7 +36,7 @@ from typing import Any, Iterable, Mapping, Sequence
 from .rubrics import StepLog
 from .types import SUBMIT, Action
 
-KINDS = ("wrong_tool", "wrong_arguments", "wrong_order", "invented_id",
+KINDS = ("wrong_tool", "wrong_arguments", "wrong_target", "wrong_order", "invented_id",
          "repeated_lookup", "extra_step")
 
 REFUSED_KIND = {"unknown_tool": "wrong_tool", "bad_arguments": "wrong_arguments",
@@ -53,6 +56,34 @@ class StepFailure:
 
 def _sig(tool: str, arguments: dict) -> str:
     return tool + json.dumps(arguments, sort_keys=True, default=str)
+
+
+def is_id_key(name: str) -> bool:
+    """Arguments that pick the object a call acts on (D30)."""
+    return name == "id" or name.endswith("_id")
+
+
+def _targets(arguments: Mapping[str, Any], keys: Iterable[str]) -> tuple:
+    return tuple((k, str(arguments.get(k, ""))) for k in sorted(keys))
+
+
+def wrong_target_reason(tool: str, arguments: Mapping[str, Any],
+                        reference: Sequence[Action]) -> str | None:
+    """None if some reference call of `tool` has the same id arguments, else a reason."""
+    calls = [a for a in reference if a.tool == tool]
+    want = []
+    for a in calls:
+        keys = [k for k in a.arguments if is_id_key(k)]
+        if not keys:
+            return None  # the reference call has no target to compare
+        if _targets(arguments, keys) == _targets(a.arguments, keys):
+            return None
+        want.append(", ".join(f"{k}={v}" for k, v in _targets(a.arguments, keys)))
+    if not want:
+        return None
+    got = ", ".join(f"{k}={arguments.get(k, '')}" for k in sorted(
+        {k for a in calls for k in a.arguments if is_id_key(k)}))
+    return f"{got}, reference {' or '.join(dict.fromkeys(want))}"
 
 
 def classify(steps: Sequence[StepLog], reference: Sequence[Action],
@@ -80,6 +111,11 @@ def classify(steps: Sequence[StepLog], reference: Sequence[Action],
         elif s.tool not in ref_count:
             failure = (("extra_step", "lookup the reference does not need") if read_only
                        else ("wrong_tool", "write tool the reference does not use"))
+        elif not read_only and (why := wrong_target_reason(s.tool, s.arguments, reference)):
+            # Right tool, wrong object: does not count as one of the reference's calls.
+            seen_sigs.add(sig)
+            out.append(StepFailure(i, s.tool, "wrong_target", why))
+            continue
         elif accepted[s.tool] >= ref_count[s.tool]:
             failure = ("extra_step", f"reference calls {s.tool} {ref_count[s.tool]} time(s)")
         else:

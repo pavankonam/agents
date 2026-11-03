@@ -11,8 +11,8 @@ spec.loader.exec_module(quiz_model)
 def test_fake_quiz_passes(capsys):
     assert quiz_model.run(fake=True, model=None) == 0
     out = capsys.readouterr().out
-    assert "12/12 tasks passed" in out and "72/72 controls" in out
-    assert "84/84 episodes replayed with the same result" in out
+    assert "12/12 tasks passed" in out and "76/76 controls" in out
+    assert "87/87 episodes replayed with the same result" in out
     assert "id vs name pairs" in out and "gap +0 points" in out
     assert "failure kinds per task" in out and "with the expected failure kinds" in out
 

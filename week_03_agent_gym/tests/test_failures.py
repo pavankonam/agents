@@ -127,3 +127,71 @@ def test_cli_run_prints_failures(capsys):
                          LLMResponse(tool_calls=[ToolCall(SUBMIT, {})])])
     assert main(["run", "delete_by_title"], client=client) == 1
     assert "failure: step 1 delete_event: invented_id" in capsys.readouterr().out
+
+
+# Day 6: wrong_target (D30)
+
+def test_wrong_target_is_a_kind_between_arguments_and_order():
+    assert KINDS.index("wrong_target") == KINDS.index("wrong_arguments") + 1
+    assert len(KINDS) == 7
+
+
+def test_delete_the_look_alike_event_is_wrong_target():
+    st = play("delete_by_title", [("list_calendars", {}),
+                                  ("list_events", {"calendar_id": "cal_team"}),
+                                  ("delete_event", {"event_id": "evt_004"})])
+    assert not st.passed and st.reward == 0.0
+    assert [(f["index"], f["kind"]) for f in st.failures] == [(3, "wrong_target")]
+    assert "event_id=evt_004, reference event_id=evt_002" in st.failures[0]["reason"]
+
+
+def test_wrong_target_does_not_use_up_the_reference_call():
+    # Wrong event first, right one after: the second delete is not an extra_step.
+    ks = kinds([("list_calendars", {}, True), ("list_events", {"calendar_id": "cal_team"}, True),
+                ("delete_event", {"event_id": "evt_004"}, True),
+                ("delete_event", {"event_id": "evt_002"}, True)])
+    assert ks == ["wrong_target"]
+
+
+def test_non_id_arguments_never_make_a_wrong_target():
+    # The date filter of a lookup and the time of a create are not targets.
+    ref = CalendarEnv.tasks["first_free_slot"].reference
+    ks = kinds([("list_calendars", {}, True), ("list_events", {"calendar_id": "cal_team"}, True),
+                ("create_event", {"calendar_id": "cal_team", "title": "Retro",
+                                  "date": "2026-11-02", "start": "14:00", "end": "15:00"}, True)],
+               ref)
+    assert ks == []
+
+
+def test_create_on_the_wrong_calendar_is_wrong_target():
+    ref = CalendarEnv.tasks["create_by_name"].reference
+    ks = kinds([("list_calendars", {}, True),
+                ("create_event", {"calendar_id": "cal_team", "title": "Dentist",
+                                  "date": "2026-11-03", "start": "15:00", "end": "16:00"}, True)],
+               ref)
+    assert ks == ["wrong_target"]
+
+
+def test_wrong_target_on_inbox_close_by_name():
+    from agent_gym import InboxEnv
+    env = InboxEnv()
+    env.reset("close_by_name")
+    for a in [Action("search_tickets", {"query": "login loop"}),
+              Action("set_status", {"ticket_id": "T-1003", "status": "closed"}),
+              Action(SUBMIT, {})]:
+        env.step(a)
+    assert not env.state.passed
+    assert [f["kind"] for f in env.state.failures] == ["wrong_target"]
+
+
+def test_every_failed_reference_mutation_in_quiz_has_a_kind():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quiz"))
+    import quiz_model
+    from agent_gym import ENVIRONMENTS
+    for (env_name, task_id), (tool, key, value) in quiz_model.WRONG_TARGET.items():
+        cls = ENVIRONMENTS[env_name]
+        ep = run_episode(cls(), FakeClient(quiz_model.wrong_target_script(
+            cls.tasks[task_id], tool, key, value)), task_id)
+        assert not ep.passed and [f["kind"] for f in ep.failures] == ["wrong_target"]
