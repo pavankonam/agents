@@ -4,9 +4,11 @@
     run     TASK [--env E] [--model M] [--max-steps N] [--seed S] [--record PATH]
                  [--breakdown] [--json]
     eval    [--env E] [--only TEXT] [--repeats N] [--seed S] [--model M] [--max-steps N]
-            [--record PATH] [--json]                                          (D31)
+            [--record PATH] [--json | --markdown]                             (D31)
     replay  PATH [--json]                                                     (D26)
-    report  PATH [--json]        the eval report rebuilt from JSONL, no model (D32)
+    report  PATH [--json | --markdown]  the eval report rebuilt from JSONL, no model (D32)
+
+--markdown prints the report as a Markdown results table for a README (D34).
 
 A task can be named `env/task` (for example `inbox/assign_by_name`) instead of using --env.
 
@@ -26,11 +28,18 @@ import json
 
 from .agent import run_episode
 from .envs import ENVIRONMENTS
-from .evaluate import build_report, eval_seeds, report_lines, run_eval, select_tasks
+from .evaluate import (build_report, eval_seeds, markdown_lines, report_lines, run_eval,
+                       select_tasks)
 from .llm import DEFAULT_MODEL, OllamaClient, check_ollama
 from .trajectory import TrajectoryError, read_jsonl, replay, write_jsonl
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE, EXIT_EMPTY, EXIT_OLLAMA = 0, 1, 2, 3, 4
+
+
+def add_output(parser: argparse.ArgumentParser) -> None:
+    out = parser.add_mutually_exclusive_group()
+    out.add_argument("--json", action="store_true")
+    out.add_argument("--markdown", action="store_true", help="Markdown results table (D34)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -61,10 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--max-steps", type=int, default=20)
     ev.add_argument("--record", default=None, metavar="PATH",
                     help="append every episode to this JSONL file")
-    ev.add_argument("--json", action="store_true")
+    add_output(ev)
     rep = sub.add_parser("report", help="summarise a JSONL file (pass rate, failure kinds, gap)")
     rep.add_argument("path", help="JSONL file written by run --record or eval --record")
-    rep.add_argument("--json", action="store_true")
+    add_output(rep)
     rp = sub.add_parser("replay", help="re-run recorded episodes and check they score the same")
     rp.add_argument("path", help="JSONL file written by run --record")
     rp.add_argument("--json", action="store_true")
@@ -92,9 +101,11 @@ def replay_file(path: str, as_json: bool) -> int:
     return EXIT_OK if all(r.ok for r in results) else EXIT_FAILED
 
 
-def print_report(report: dict, as_json: bool, title: str) -> int:
+def print_report(report: dict, as_json: bool, title: str, markdown: bool = False) -> int:
     if as_json:
         print(json.dumps(report, indent=2))
+    elif markdown:
+        print("\n".join(markdown_lines(report, title.strip())))
     else:
         print(title)
         for line in report_lines(report):
@@ -102,7 +113,7 @@ def print_report(report: dict, as_json: bool, title: str) -> int:
     return EXIT_OK if report["passed"] == report["runs"] else EXIT_FAILED
 
 
-def report_file(path: str, as_json: bool) -> int:
+def report_file(path: str, as_json: bool, markdown: bool = False) -> int:
     try:
         records = read_jsonl(path)
         report = build_report(records, ENVIRONMENTS)
@@ -115,7 +126,8 @@ def report_file(path: str, as_json: bool) -> int:
     if not records:
         print(f"PROBLEM: {path} has no records")
         return EXIT_EMPTY
-    return print_report(report, as_json, f"report of {len(records)} episodes from {path}")
+    return print_report(report, as_json, f"report of {len(records)} episodes from {path}",
+                        markdown)
 
 
 def eval_command(args, client, client_factory, check) -> int:
@@ -137,7 +149,7 @@ def eval_command(args, client, client_factory, check) -> int:
     seeds = eval_seeds(args.repeats, args.seed)
 
     def progress(ep):
-        if not args.json:
+        if not (args.json or args.markdown):
             seed = "canonical" if ep.seed is None else f"seed {ep.seed}"
             print(f"{'PASS' if ep.passed else 'FAIL'} {ep.env}/{ep.task_id} ({seed}) "
                   f"reward {ep.reward:.3f} {[f['kind'] for f in ep.failures] or ''}".rstrip())
@@ -145,9 +157,10 @@ def eval_command(args, client, client_factory, check) -> int:
     episodes = run_eval(chosen, client_factory, seeds, args.max_steps, progress)
     if args.record:
         write_jsonl(args.record, episodes, model=getattr(client, "model", "fake"))
-    report = build_report(episodes, ENVIRONMENTS)
+    report = build_report(episodes, ENVIRONMENTS, model=getattr(client, "model", "fake"))
     return print_report(report, args.json,
-                        f"\neval: {len(chosen)} tasks x {len(seeds)} seeds = {len(episodes)} episodes")
+                        f"\neval: {len(chosen)} tasks x {len(seeds)} seeds = {len(episodes)} episodes",
+                        args.markdown)
 
 
 def breakdown_lines(node: dict, indent: int = 0) -> list[str]:
@@ -182,7 +195,7 @@ def main(argv: list[str], client=None, check=check_ollama, client_factory=None) 
     if args.command == "replay":
         return replay_file(args.path, args.json)
     if args.command == "report":
-        return report_file(args.path, args.json)
+        return report_file(args.path, args.json, args.markdown)
     if args.command == "eval":
         return eval_command(args, client, client_factory, check)
     env_name, task_id = args.env, args.task

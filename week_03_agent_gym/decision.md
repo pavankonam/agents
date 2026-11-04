@@ -187,3 +187,35 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Decision:** 0 everything passed (or replayed the same), 1 something ran but failed (or differs), 2 usage (bad arguments, unknown env or task, a filter that matches nothing, an unreadable or invalid JSONL file), 3 nothing to report (a JSONL file with no records), 4 Ollama not ready. Listed in the `cli.py` docstring and the README, pinned by `test_exit_codes_are_fixed`.
 **Why:** The PRD asks for fixed exit codes so that `eval` and `report` can gate a script or CI job. An empty file is neither a pass nor a failure, so it gets its own code instead of a misleading 0.
 **Alternatives:** Exit 1 for any problem (a script cannot tell a broken setup from a failed model), 0 for an empty report (hides a recording that never happened).
+
+## D34. A Markdown results table from the same report (2026-11-04)
+
+**Decision:** `evaluate.markdown_lines(report, title)` prints the report as Markdown: one summary line (model, runs, passed and pass rate, mean reward, seeds), a per task table with passed, mean reward and one column per failure kind (all seven), a bold total row, the count of failed runs with no failure kind, a pair table (id variant and name variant passes) and the id vs name gap. `report` and `eval` take `--markdown` in a mutually exclusive group with `--json` (both together is a usage error, exit 2); in Markdown mode `eval` prints no progress lines, so its output can go straight into a file. The report gains `models`, taken from each record's `meta.model`, or from the client for a live eval, so a table always says which model produced it. `results/RESULTS.md` holds the scripted reference table built this way from `results/fake_reference.jsonl`; the root `.gitignore` now keeps `week_*/results/*.jsonl` (other JSONL files stay ignored) so the evidence behind a results table is committed with it.
+**Why:** The day 7 milestone is a results table in the README. Copying numbers by hand from the text table is how a README drifts from the data; one function over the same report dict means the table in the README is exactly what `report FILE --markdown` prints, and anyone can rebuild it from the JSONL file. Naming the model in the table stops a fake or old run being read as a real one.
+**Alternatives:** A separate script that parses the text table (two formats to keep in sync), CSV (does not render on GitHub), letting `--json` win over `--markdown` silently (a typo would hide which format was asked for).
+
+## D35. Close the week without the qwen3:4b numbers, and say so (2026-11-04)
+
+**Decision:** The project closes on day 7 as planned. The real model table is not invented or estimated: `results/RESULTS.md` carries the scripted reference table, labelled as a pipeline check, and the two commands that produce the qwen3:4b table on the Mac. The PRD success criterion about qwen3:4b is recorded as not yet verified.
+**Why:** The automation runs in a shell on the Mac that cannot reach the Mac's own Ollama (checked again today: `localhost:11434` refuses and there is no `ollama` binary in that shell). A made up or remembered number would break the one rule the project is built on: results come from checked state, not from what someone says. Everything needed to produce the real table is one command away and recorded files can be checked later with `report` and `replay`.
+**Alternatives:** Keep the week open until a real run happens (blocks the weekly cycle on something the automation cannot do), run a tiny model inside the shell (no Ollama there, and a different model would not answer the question the PRD asked).
+
+## Retro (week 03, 2026-11-04)
+
+**What went well**
+* The OpenEnv shape (`reset`, `step`, `state`, reward computed inside the env) held all week. Two environments, rubrics, failures, seeds, replay and eval were added without changing the agent loop beyond passing a seed.
+* Scoring by final state, with collateral damage checks, made the zero score controls meaningful: doing nothing, submitting at once and pointing a write at a look alike all score 0, and the quiz proves it on every run (76 controls).
+* Keeping diagnosis (failure kinds) separate from reward kept both simple. The reward never had to change when `wrong_target` was added on day 6.
+* Replay turned results into evidence: every recorded episode, fake or real, can be re-run without a model and must give the same observations, reward and failure kinds (87 replays per quiz run).
+* One report function for live runs, JSONL files, the text table, `--json` and `--markdown` means the README table cannot drift from the data. 182 tests run in under a second.
+
+**What did not**
+* For the third week in a row the real model numbers are missing, for the same reason: the automation cannot reach Ollama. The week 01 and week 02 retros both said to get a baseline early and it still landed on day 7. The id vs name gap, the headline question of the week, is measured only on the scripted reference, where it is 0 by construction.
+* The failure taxonomy is judged against one reference per task. A different but valid order of lookups can show up as `wrong_order` or `extra_step`, which lowers reward slightly for a correct run.
+* `wrong_target` only looks at id arguments (D30). A create at the wrong time is caught by the state check but has no failure kind of its own beyond the refusal, if any.
+* Both environments are small (5 events, 5 tickets). Seeds shuffle order and ids but do not add new distractors, so the traps are the same every time.
+
+**Next time**
+* Make the first real model run part of day 1 for the next project: the day 1 PR should include a command that Pavan runs once and a results file in the repo, so the week reports a real baseline from the start.
+* Allow a set of acceptable references per task (or a partial order) before trusting `wrong_order` on real runs.
+* Generate distractor records from the seed, not only reorder them.

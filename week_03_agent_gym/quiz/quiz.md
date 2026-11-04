@@ -125,3 +125,23 @@ Answer: 3 (no records: nothing to report), 2 (cannot read), 2 (bad record field)
 Verified: test `test_cli_report_exit_codes` covers all three; `report /nonexistent` exited 2 on 2026-11-03. **PASS**
 
 Day 6 result: 4/4 PASS.
+
+## Day 7 (2026-11-04)
+
+**Q26. `python3 -m agent_gym report results/fake_reference.jsonl --json --markdown`: what happens?**
+Answer: `--json` and `--markdown` are in one mutually exclusive argparse group, so argparse rejects the pair ("not allowed with argument --json") and `main` turns that into exit 2, usage (D33, D34). Nothing is printed from the report.
+Verified: ran it on 2026-11-04: argparse error, exit 2. Test `test_cli_markdown_for_eval_and_report`. **PASS**
+
+**Q27. `eval --only inbox/close --markdown` where the name variant closes T-1003 instead of T-1002: which cells show it, and what is the gap line?**
+Answer: Row `inbox/close_by_name` reads `0/1`, `0.000`, and a 1 in the `wrong target` column only; the total row is `1/2`, `0.500` with 1 under `wrong target`; the pair row `inbox/close` is `1/1` vs `0/1` and the last line is "Pass rate with ids 100%, with names 0%, gap +100 points."
+Verified: ran it on 2026-11-04 with the quiz_model wrong target script, output exactly as above. Test `test_markdown_counts_a_wrong_target_and_the_gap`. **PASS**
+
+**Q28. Where does the model name in the Markdown summary come from, and what does it say for episodes built without one?**
+Answer: From `meta.model` of each JSONL record (written by `write_jsonl(..., model=...)`), or for live episodes from the `model` passed to `build_report`, which `eval` takes from the client ("fake" for scripted clients). With neither, `models` is empty and the summary says "Model: unknown."
+Verified: ran `build_report` on two live reference episodes with no model on 2026-11-04: `Model: unknown. Runs: 2, passed 2 (100%) ...`. Test `test_report_names_the_model_from_records_and_live`. **PASS**
+
+**Q29. Does `--markdown` change the exit code of a failed eval?**
+Answer: No. `print_report` only picks the format; the exit code is still 0 when every run passed and 1 otherwise, so the Q27 run exits 1.
+Verified: the Q27 run returned 1 on 2026-11-04. **PASS**
+
+Day 7 result: 4/4 PASS. Week total: 29 questions, every FAIL fixed the same day.

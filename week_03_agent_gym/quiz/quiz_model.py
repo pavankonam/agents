@@ -30,7 +30,9 @@ plays the reference but points one write at a look alike object (T-1003 for
 T-1002, evt_004 for evt_002, agt_02 for agt_01): it must fail with exactly one
 failure kind, wrong_target (D30). And an eval of every reference on seeds 1 and
 2 is written to JSONL and read back: the report rebuilt from the file must equal
-the live one, with every run passed and no failure kinds (D31, D32).
+the live one, with every run passed and no failure kinds (D31, D32), and its
+Markdown results table must have one row per task and pair, the total row and
+the model name (D34).
 
 Exit codes: 0 all pass, 1 some failed, 2 bad --only, 4 Ollama not ready.
 """
@@ -46,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from agent_gym.agent import run_episode  # noqa: E402
 from agent_gym.envs import ENVIRONMENTS  # noqa: E402
-from agent_gym.evaluate import build_report, run_eval, select_tasks  # noqa: E402
+from agent_gym.evaluate import build_report, markdown_lines, run_eval, select_tasks  # noqa: E402
 from agent_gym.failures import KINDS, summarize  # noqa: E402
 from agent_gym.gap import gap_lines, id_name_gap  # noqa: E402
 from agent_gym.llm import (DEFAULT_MODEL, FakeClient, LLMResponse, OllamaClient,  # noqa: E402
@@ -123,7 +125,7 @@ def eval_round_trip(only: str | None) -> list[str]:
     import tempfile
     chosen = select_tasks(ENVIRONMENTS, only=only)
     eps = run_eval(chosen, lambda env, task: FakeClient(reference_script(task)), [1, 2])
-    live = build_report(eps, ENVIRONMENTS)
+    live = build_report(eps, ENVIRONMENTS, model="fake")
     with tempfile.TemporaryDirectory() as d:
         path = Path(d) / "eval.jsonl"
         write_jsonl(path, eps, model="fake")
@@ -134,6 +136,15 @@ def eval_round_trip(only: str | None) -> list[str]:
     if live["passed"] != live["runs"] or any(live["failures"].values()):
         bad.append(f"eval of references: {live['passed']}/{live['runs']} passed, "
                    f"failures {live['failures']}")
+    # The Markdown table (D34): one row per task plus the total, and the model named.
+    md = markdown_lines(again, "eval")
+    rows = [line for line in md if line.startswith("| ") and "/" in line.split("|")[1]]
+    if len(rows) != len(chosen) + len(live["gap"]["pairs"]):
+        bad.append(f"markdown table has {len(rows)} task and pair rows, expected "
+                   f"{len(chosen)} tasks and {len(live['gap']['pairs'])} pairs")
+    if not any(line.startswith("| **total** | **" + f"{live['runs']}/{live['runs']}")
+               for line in md) or "Model: fake." not in "\n".join(md):
+        bad.append("markdown table is missing the total row or the model name")
     return bad
 
 

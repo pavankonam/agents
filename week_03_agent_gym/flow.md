@@ -1,6 +1,6 @@
 # Flow: Agent Gym
 
-Status: **Day 6**. Every box exists in the code.
+Status: **Day 7, closed**. Every box exists in the code.
 
 ```mermaid
 flowchart TD
@@ -48,7 +48,8 @@ flowchart TD
     CMP -->|no| DIFF[DIFF with each mismatch, exit 1]
     EP --> BR[evaluate.build_report<br/>per task pass rate, mean reward,<br/>failure kinds, failed runs without a kind,<br/>id vs name gap]
     JL --> REP[report PATH, no model] --> BR
-    BR --> OUT[table or --json<br/>exit 0 all passed, 1 failed,<br/>2 usage, 3 empty file, 4 Ollama]
+    BR --> OUT[table, --json or --markdown<br/>exit 0 all passed, 1 failed,<br/>2 usage, 3 empty file, 4 Ollama]
+    OUT -->|--markdown, model named| MD[(results/RESULTS.md<br/>per task, failure kinds,<br/>total, id vs name pairs)]
 ```
 
 ## How it works
@@ -64,6 +65,7 @@ flowchart TD
 9. `reset(task, seed=N)` shuffles the env's lists (calendars and events, agents and tickets) with `Random(N)` and, on the calendar, moves the first new event id to `evt_101` to `evt_1000` (D25). No seed means the canonical data. Ids, contents and checks are unchanged, so a reference passes on every seed, but an agent that picks "the first result" or guesses `evt_101` no longer gets lucky.
 10. `trajectory.to_record` turns an `Episode` into one JSON line; `replay` rebuilds the episode from the line alone, without the model, and lists every difference (D26, D27). The quiz replays all 87 fake episodes on every run.
 11. `eval` runs every chosen task once per seed (`eval_seeds`: canonical data for one repeat, otherwise seeds S, S+1, ...) and prints one line per episode, then the report (D31). `build_report` takes episodes or JSONL records, so `report runs.jsonl` gives the same table without a model (D32). Every command uses one exit code table (D33).
+12. `--markdown` on `report` and `eval` prints the same report as a Markdown results table: summary with the model name, one row per task with every failure kind, a bold total, failed runs with no kind, and the id vs name pairs and gap (D34). `results/RESULTS.md` is built this way from recorded JSONL files, so the README numbers can always be rebuilt and replayed.
 
 ## Reward examples (default rubric)
 

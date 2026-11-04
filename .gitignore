@@ -8,3 +8,4 @@ venv/
 audit_logs/
 *.jsonl
 .gh_token
+!week_*/results/*.jsonl

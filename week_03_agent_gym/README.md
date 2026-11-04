@@ -2,7 +2,7 @@
 
 A small **OpenEnv shaped gym** for tool using agents on a **free local model through Ollama**. Environments expose `reset()`, `step(action)` and `state`; a local model drives them through tool calls; and every episode is scored by checking the environment's **final state**, never by trusting what the model says it did. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 6 of 7. Day 6 added `eval` (every task, N repeats over seeds), `report` (the same table from a JSONL file), one exit code table for every command, and a seventh failure kind, `wrong_target`, for a write aimed at the wrong object. Core types, `Environment` base with argument validation and step limit, a calendar environment with four tools and four tasks (explicit id, name lookup, ambiguous title with a trap event, first free slot), state checks that also catch collateral damage, the episode runner, a small CLI and a model quiz with zero score controls. New on day 2: composable **rubrics** (`StateCheck`, `TrajectoryRubric`, `WeightedSum`, `Gate`). The default reward gates on the final state, then gives 0.8 for the outcome and 0.2 for a clean trajectory (minus 0.2 per refused step, 0.1 per step over the reference). `passed` (state check clean) is kept separate from `reward`, and every episode carries its rubric tree as `breakdown`. New on day 3: a **failure taxonomy**. Every refused or wasted step gets one kind (`wrong_tool`, `wrong_arguments`, `wrong_order`, `invented_id`, `repeated_lookup`, `extra_step`), judged from the env's own error kind and the task's reference solution, stored as `failures` and counted per task. It explains the reward and never changes it. New on day 4: a second environment, a **support ticket inbox** (agents, tickets, search, assign, status, priority, two same subject traps, a field level state check), and **paired tasks**: the same job phrased once with explicit ids and once with names to look up. Five pairs across both envs (12 tasks in total) measure the **id vs name gap**, the pass rate difference that Turing's Calendar Gym found to be large (89% vs 41%). New on day 5: **seeded data and trajectories**. `reset(seed=N)` shuffles the env's lists and moves new calendar ids, so a lucky guess of the first result or of `evt_101` stops working while every reference still passes. Every episode can be written as one JSONL line (`run --record`, `quiz_model.py --record`) and **replayed** without the model: a fresh env with the same task and seed gets the same actions and must reproduce every observation, the end reason, reward, passed, problems and failure kinds. 153 tests.
+**Status:** Closed on day 7 (2026-11-04). Day 7 added `--markdown` to `report` and `eval` (the same report as a Markdown results table, naming the model), `results/RESULTS.md`, the results section below and the retro in [decision.md](decision.md). Day 6 added `eval` (every task, N repeats over seeds), `report` (the same table from a JSONL file), one exit code table for every command, and a seventh failure kind, `wrong_target`, for a write aimed at the wrong object. Core types, `Environment` base with argument validation and step limit, a calendar environment with four tools and four tasks (explicit id, name lookup, ambiguous title with a trap event, first free slot), state checks that also catch collateral damage, the episode runner, a small CLI and a model quiz with zero score controls. New on day 2: composable **rubrics** (`StateCheck`, `TrajectoryRubric`, `WeightedSum`, `Gate`). The default reward gates on the final state, then gives 0.8 for the outcome and 0.2 for a clean trajectory (minus 0.2 per refused step, 0.1 per step over the reference). `passed` (state check clean) is kept separate from `reward`, and every episode carries its rubric tree as `breakdown`. New on day 3: a **failure taxonomy**. Every refused or wasted step gets one kind (`wrong_tool`, `wrong_arguments`, `wrong_order`, `invented_id`, `repeated_lookup`, `extra_step`), judged from the env's own error kind and the task's reference solution, stored as `failures` and counted per task. It explains the reward and never changes it. New on day 4: a second environment, a **support ticket inbox** (agents, tickets, search, assign, status, priority, two same subject traps, a field level state check), and **paired tasks**: the same job phrased once with explicit ids and once with names to look up. Five pairs across both envs (12 tasks in total) measure the **id vs name gap**, the pass rate difference that Turing's Calendar Gym found to be large (89% vs 41%). New on day 5: **seeded data and trajectories**. `reset(seed=N)` shuffles the env's lists and moves new calendar ids, so a lucky guess of the first result or of `evt_101` stops working while every reference still passes. Every episode can be written as one JSONL line (`run --record`, `quiz_model.py --record`) and **replayed** without the model: a fresh env with the same task and seed gets the same actions and must reproduce every observation, the end reason, reward, passed, problems and failure kinds. 182 tests.
 
 ## Run it
 
@@ -23,21 +23,39 @@ python3 -m agent_gym eval                          # every task once, canonical 
 python3 -m agent_gym eval --env inbox --repeats 3 --record qwen3.jsonl   # seeds 1, 2, 3
 python3 -m agent_gym report qwen3.jsonl            # the eval table again, from the file
 python3 -m agent_gym report qwen3.jsonl --json
+python3 -m agent_gym report qwen3.jsonl --markdown   # results table for a README
 ```
 
-`eval` prints one line per episode and then a table: per task passes and mean reward, the count of each failure kind, a total row, the seeds used, the number of failed runs with no failure kind, and the id vs name gap. `report` rebuilds exactly the same table from a JSONL file.
+`eval` prints one line per episode and then a table (with `--markdown`, only the Markdown table): per task passes and mean reward, the count of each failure kind, a total row, the seeds used, the number of failed runs with no failure kind, and the id vs name gap. `report` rebuilds exactly the same table from a JSONL file.
 
 | Exit code | Meaning (every command) |
 | --- | --- |
 | 0 | everything passed, or replayed the same |
 | 1 | something ran but failed, or a replay differs |
-| 2 | usage: bad arguments, unknown env or task, a filter that matches nothing, unreadable JSONL |
+| 2 | usage: bad arguments (including `--json` with `--markdown`), unknown env or task, a filter that matches nothing, unreadable JSONL |
 | 3 | nothing to report: the JSONL file has no records |
 | 4 | Ollama not ready |
 
 `replay` prints `SAME` or `DIFF` per episode with every mismatch (an observation, the end reason, reward, passed, problems or failure kinds) and exits 0 when all match, 1 when any differs and 2 when the file cannot be read.
 
 Each run prints every step (`ok` or `ERR`, the tool, its arguments, the result), then PASS or FAIL (state check), the reward (rubric score), the end reason (`submitted`, `no_submit`, `step_limit`, `turn_limit`) and, on failure, the problems the state check found, then one `failure:` line per refused or wasted step with its kind. Exit code 0 means the state check passed (reward may be below 1.0 for a messy run), 1 means the task failed, 2 is a usage error and 4 means Ollama is not ready.
+
+## Results
+
+Full tables and how to rebuild them: [results/RESULTS.md](results/RESULTS.md).
+
+| Run | Model | Tasks x seeds | Passed | Mean reward | Failure kinds | Failed with no kind | id vs name |
+| --- | --- | --- | ---: | ---: | --- | ---: | --- |
+| Scripted reference (pipeline check) | fake | 12 x canonical | 12/12 | 1.000 | none | 0 | 100% vs 100%, gap 0 |
+| Fake controls (quiz_model `--fake`) | fake | 76 controls | 76/76 as expected | | do nothing 0, messy below 1.0, 3 x `wrong_target` | | |
+| Local model | qwen3:4b | 12 x seeds 1 to 3 | not run yet | | | | |
+
+The qwen3:4b row is empty on purpose: the daily automation cannot reach Ollama on the Mac, and the project only reports numbers that come from checked state (D35). To fill it in:
+
+```bash
+python3 -m agent_gym eval --repeats 3 --record results/qwen3_4b.jsonl
+python3 -m agent_gym report results/qwen3_4b.jsonl --markdown >> results/RESULTS.md
+```
 
 ## Quiz the model
 
@@ -84,6 +102,7 @@ The tests use a scripted fake model, so no Ollama is needed.
 | `src/agent_gym/agent.py` | `run_episode` and `Episode` |
 | `src/agent_gym/llm.py` | Ollama and fake clients (copied from week 02) |
 | `src/agent_gym/trajectory.py` | JSONL records and `replay`: `to_record`, `write_jsonl`, `read_jsonl`, `replay` |
-| `src/agent_gym/evaluate.py` | `eval_seeds`, `select_tasks`, `run_eval`, `build_report`, `report_lines` |
+| `src/agent_gym/evaluate.py` | `eval_seeds`, `select_tasks`, `run_eval`, `build_report`, `report_lines`, `markdown_lines` |
 | `src/agent_gym/cli.py` | `list` (with pairs), `run` (with `--breakdown`, `--seed`, `--record`, `env/task` names), `eval`, `replay` and `report` |
 | `quiz/` | Self quiz and the model quiz |
+| `results/` | Recorded JSONL runs and `RESULTS.md` built from them |

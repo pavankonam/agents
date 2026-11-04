@@ -68,18 +68,23 @@ class Row:
     reward: float
     seed: int | None = None
     failures: list[dict] = field(default_factory=list)
+    model: str | None = None
 
 
-def as_row(item: Any) -> Row:
+def as_row(item: Any, model: str | None = None) -> Row:
+    """`model` fills in the model name when the item does not carry one (a live Episode)."""
     if isinstance(item, Mapping):  # a trajectory record: failures are kind strings
+        meta = item.get("meta") or {}
         return Row(item["env"], item["task_id"], bool(item["passed"]), float(item["reward"]),
-                   item.get("seed"), [{"kind": k} for k in item.get("failures", [])])
+                   item.get("seed"), [{"kind": k} for k in item.get("failures", [])],
+                   meta.get("model") or model)
     return Row(item.env, item.task_id, bool(item.passed), float(item.reward),
-               getattr(item, "seed", None), [{"kind": f["kind"]} for f in item.failures])
+               getattr(item, "seed", None), [{"kind": f["kind"]} for f in item.failures], model)
 
 
-def build_report(items: Iterable[Any], environments: Mapping[str, Any]) -> dict:
-    rows = [as_row(i) for i in items]
+def build_report(items: Iterable[Any], environments: Mapping[str, Any],
+                 model: str | None = None) -> dict:
+    rows = [as_row(i, model) for i in items]
     tasks: dict[tuple[str, str], list[Row]] = {}
     for r in rows:
         tasks.setdefault((r.env, r.task_id), []).append(r)
@@ -98,6 +103,7 @@ def build_report(items: Iterable[Any], environments: Mapping[str, Any]) -> dict:
         "runs": len(rows), "passed": passed,
         "pass_rate": passed / len(rows) if rows else None,
         "mean_reward": round(sum(r.reward for r in rows) / len(rows), 6) if rows else None,
+        "models": sorted({r.model for r in rows if r.model}),
         "seeds": sorted({r.seed for r in rows}, key=lambda s: (s is not None, s or 0)),
         "failed_runs_without_kind": sum(t["failed_runs_without_kind"] for t in per_task),
         "tasks": per_task,
@@ -123,4 +129,43 @@ def report_lines(report: dict) -> list[str]:
     lines.append(f"seeds: {seeds}")
     lines.append(f"failed runs with no failure kind: {report['failed_runs_without_kind']}")
     lines += gap_lines(report["gap"])
+    return lines
+
+
+def _pct(x: float | None) -> str:
+    return "n/a" if x is None else f"{x * 100:.0f}%"
+
+
+def markdown_lines(report: dict, title: str | None = None) -> list[str]:
+    """The report as Markdown: a summary line, a per task table with every failure kind,
+    a total row, and the id vs name pairs (D34). Same numbers as `report_lines`."""
+    models = ", ".join(report.get("models") or []) or "unknown"
+    seeds = ", ".join("canonical" if s is None else str(s) for s in report["seeds"]) or "none"
+    lines = [f"### {title}", ""] if title else []
+    if not report["runs"]:
+        return lines + ["No runs."]
+    lines += [f"Model: {models}. Runs: {report['runs']}, passed {report['passed']} "
+              f"({_pct(report['pass_rate'])}), mean reward {report['mean_reward']:.3f}. "
+              f"Seeds: {seeds}.", ""]
+    names = [k.replace("_", " ") for k in KINDS]
+    lines.append("| task | passed | mean reward | " + " | ".join(names) + " |")
+    lines.append("| --- | ---: | ---: | " + " | ".join("---:" for _ in KINDS) + " |")
+    for t in report["tasks"]:
+        lines.append(f"| {t['env']}/{t['task']} | {t['passed']}/{t['runs']} | "
+                     f"{t['mean_reward']:.3f} | "
+                     + " | ".join(str(t["failures"][k]) for k in KINDS) + " |")
+    lines.append(f"| **total** | **{report['passed']}/{report['runs']}** | "
+                 f"**{report['mean_reward']:.3f}** | "
+                 + " | ".join(f"**{report['failures'][k]}**" for k in KINDS) + " |")
+    lines += ["", f"Failed runs with no failure kind: {report['failed_runs_without_kind']}."]
+    gap = report["gap"]
+    if gap["pairs"]:
+        lines += ["", "| pair | id variant | name variant |", "| --- | ---: | ---: |"]
+        for r in gap["pairs"]:
+            note = "" if r["complete"] else " (one variant only)"
+            lines.append(f"| {r['env']}/{r['pair']}{note} | {r['id_pass']}/{r['id_runs']} | "
+                         f"{r['name_pass']}/{r['name_runs']} |")
+        g = "n/a" if gap["gap"] is None else f"{gap['gap'] * 100:+.0f} points"
+        lines += ["", f"Pass rate with ids {_pct(gap['id_rate'])}, with names "
+                      f"{_pct(gap['name_rate'])}, gap {g}."]
     return lines
