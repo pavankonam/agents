@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .ledger import EvidenceLedger
+from .support import CHECK_SCHEMA, INVALID, SUPPORTED, UNCHECKED, check_support, parse_check
 from .telemetry import KINDS, Scenario
 
 REPORT_FINDING = "report_finding"
@@ -40,8 +41,10 @@ TOOLS: list[dict] = [
         {"service": _STR, "metric": _STR}, ["service"]),
     _fn("list_deploys", "List deploys, optionally for one service, with evidence ids.",
         {"service": _STR}, []),
-    _fn(REPORT_FINDING, "Record one finding. It must cite the evidence ids that support it.",
-        {"claim": _STR, "evidence_ids": _IDS}, ["claim", "evidence_ids"]),
+    _fn(REPORT_FINDING, "Record one finding. It must cite the evidence ids that support it. "
+        "Add check to have the claim verified against the cited rows; a check the rows "
+        "contradict or do not cover rejects the finding.",
+        {"claim": _STR, "evidence_ids": _IDS, "check": CHECK_SCHEMA}, ["claim", "evidence_ids"]),
     _fn(CONCLUDE, "Finish the investigation: name the root cause service, explain it, cite evidence.",
         {"root_cause_service": _STR, "summary": _STR, "evidence_ids": _IDS},
         ["root_cause_service", "summary", "evidence_ids"]),
@@ -75,6 +78,9 @@ class Finding:
     accepted: bool
     problems: list[str] = field(default_factory=list)
     step: int = 0
+    check: dict[str, Any] | None = None
+    support: str = UNCHECKED
+    support_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -100,9 +106,17 @@ class Report:
     def refused_steps(self) -> int:
         return sum(1 for s in self.steps if not s.ok)
 
+    def support_counts(self) -> dict[str, int]:
+        """How many findings ended in each support status (accepted or not)."""
+        counts: dict[str, int] = {}
+        for f in self.findings:
+            counts[f.support] = counts.get(f.support, 0) + 1
+        return counts
+
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["refused_steps"] = self.refused_steps
+        d["support"] = self.support_counts()
         d["accepted"] = len(self.accepted_findings)
         d["rejected"] = len(self.rejected_findings)
         return d
@@ -125,6 +139,8 @@ def validate_args(name: str, args: Any) -> str:
     for k, v in args.items():
         if props[k]["type"] == "string" and not isinstance(v, str):
             return f"argument {k} of {name} must be a string"
+        if props[k].get("type") == "object" and not isinstance(v, dict):
+            return f"argument {k} of {name} must be an object"
         if props[k]["type"] == "array" and not (
                 isinstance(v, list) and all(isinstance(x, str) for x in v)):
             return f"argument {k} of {name} must be a list of strings"
@@ -246,11 +262,29 @@ class Investigation:
         claim = args["claim"].strip()
         ids = list(args["evidence_ids"])
         problems = [] if claim else ["empty claim"]
-        problems += self._citation_problems(ids)
-        self.findings.append(Finding(claim, ids, not problems, problems, log.index))
+        cite_problems = self._citation_problems(ids)
+        problems += cite_problems
+        finding = Finding(claim, ids, False, problems, log.index)
+        if "check" in args:
+            check, err = parse_check(args["check"])
+            if err:
+                finding.check, finding.support = dict(args["check"]), INVALID
+                problems.append(f"invalid check: {err}")
+            else:
+                finding.check = check
+                if not cite_problems:  # support is only judged on real citations (D14)
+                    res = check_support(check, ids, self.ledger)
+                    finding.support, finding.support_ids = res.status, res.ids
+                    if res.status != SUPPORTED:
+                        problems.append(f"claim {res.status}: {res.reason}")
+        finding.accepted = not problems
+        self.findings.append(finding)
         if problems:
             return ToolResult(False, "", "finding rejected: " + "; ".join(problems))
-        return ToolResult(True, f"finding {len(self.accepted_findings())} recorded with {len(ids)} citation(s)")
+        note = (f", check supported by {', '.join(finding.support_ids)}"
+                if finding.support == SUPPORTED else ", no check")
+        return ToolResult(True, f"finding {len(self.accepted_findings())} recorded with "
+                                f"{len(ids)} citation(s){note}")
 
     def accepted_findings(self) -> list[Finding]:
         return [f for f in self.findings if f.accepted]

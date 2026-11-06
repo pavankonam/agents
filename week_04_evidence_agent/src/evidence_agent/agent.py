@@ -16,6 +16,10 @@ Rules:
 - You may only cite evidence ids that a tool returned to you in this investigation.
   Never make up an id. A finding or conclusion with an unknown id is rejected.
 - Record what you learn with report_finding: one claim and the ids that support it.
+  Add a check so the claim is verified against the rows you cite, for example
+  {{"service": "checkout", "field": "p95_latency_ms", "op": ">", "value": 2000, "at": "14:05"}}.
+  field is a metric name, or level/message for logs, or version/note for deploys.
+  A check that your cited rows contradict or do not cover rejects the finding.
 - When you know the cause, call conclude with the root cause service, a short summary
   and the evidence ids. A plain text answer does not count as a conclusion.
 - You have at most {max_steps} tool calls. Services: {services}."""
@@ -62,9 +66,13 @@ def report_lines(report: Report) -> list[str]:
              f"{report.evidence_issued} evidence ids issued)"]
     for f in report.findings:
         mark = "accepted" if f.accepted else "REJECTED"
-        lines.append(f"  finding [{mark}] {f.claim!r} cites {', '.join(f.evidence_ids) or 'nothing'}")
+        lines.append(f"  finding [{mark}, {f.support}] {f.claim!r} cites "
+                     f"{', '.join(f.evidence_ids) or 'nothing'}")
         for p in f.problems:
             lines.append(f"    problem: {p}")
+    counts = report.support_counts()
+    if counts:
+        lines.append("  claim support: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
     c = report.conclusion
     if c:
         lines.append(f"  conclusion: {c['root_cause_service']} "

@@ -84,7 +84,7 @@ def test_finding_with_issued_ids_is_accepted():
     i = inv()
     i.call("list_deploys", {"service": "payments"})
     r = i.call("report_finding", {"claim": "pool cut", "evidence_ids": ["ev_001"]})
-    assert r.ok and r.content == "finding 1 recorded with 1 citation(s)"
+    assert r.ok and r.content == "finding 1 recorded with 1 citation(s), no check"
     assert i.report().accepted_findings[0].claim == "pool cut"
 
 

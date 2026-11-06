@@ -14,7 +14,7 @@ def test_reference_passes_with_three_accepted_findings():
 
 
 def test_controls_end_as_declared():
-    for name, (factory, must_pass, end, rejected) in CONTROLS.items():
+    for name, (factory, must_pass, end, rejected, _support) in CONTROLS.items():
         r = run_investigation(FakeClient(factory()), CHECKOUT_LATENCY)
         assert (r.passed, r.end_reason, len(r.rejected_findings)) == (must_pass, end, rejected), name
 
@@ -68,3 +68,23 @@ def test_report_lines_and_json():
 def test_rejected_conclusion_is_a_refused_step_not_a_finding():
     r = run_investigation(FakeClient(CONTROLS["invented_id"][0]()), CHECKOUT_LATENCY)
     assert r.refused_steps == 1 and r.findings == [] and r.end_reason == "no_conclusion"
+
+
+def test_controls_support_statuses_as_declared():
+    for name, (factory, _p, _e, _r, support) in CONTROLS.items():
+        r = run_investigation(FakeClient(factory()), CHECKOUT_LATENCY)
+        assert tuple(f.support for f in r.findings) == support, name
+
+
+def test_reference_findings_all_supported_and_counted_in_json():
+    r = run_investigation(FakeClient(reference_checkout()), CHECKOUT_LATENCY)
+    assert all(f.support == "supported" for f in r.findings)
+    d = json.loads(report_json(r))
+    assert d["support"] == {"supported": 3}
+    assert d["findings"][2]["support_ids"] == ["ev_007"]
+    assert "  claim support: supported 3" in report_lines(r)
+
+
+def test_system_prompt_explains_check():
+    p = system_prompt(CHECKOUT_LATENCY, 12)
+    assert '"op": ">"' in p and "contradict or do not cover rejects the finding" in p

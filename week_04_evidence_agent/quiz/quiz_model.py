@@ -7,11 +7,16 @@ Pass means the investigation concluded with the scenario's true root cause
 service and every citation in the conclusion was an evidence id that a tool
 returned in this run (D4, D8). The model's own text never decides it.
 
-In --fake mode the scripted reference must pass with no rejected finding, and
-four controls must end exactly as CONTROLS in scripted.py says: a text only
+In --fake mode the scripted reference must pass with no rejected finding and
+every finding's check supported, and six controls must end exactly as CONTROLS
+in scripted.py says, including the support status of each finding: a text only
 answer and a conclusion that cites an invented id both fail with no_conclusion,
 a rejected finding followed by the reference still passes with one rejected
-finding, and a conclusion that blames the red herring service fails (D10).
+finding, a conclusion that blames the red herring service fails, and a finding
+whose real cited rows contradict it or say nothing about it is rejected as
+contradicted or unsupported (D10, D17).
+
+Live runs print the claim support counts per scenario (D13).
 
 --record PATH appends one JSON report per scenario (live or fake), which is how
 the first real baseline gets into results/ (D11).
@@ -45,13 +50,15 @@ def check_main(report) -> list[str]:
 def run_controls(out) -> int:
     failures = 0
     scenario = SCENARIOS["checkout_latency"]
-    for name, (factory, must_pass, end, rejected) in CONTROLS.items():
+    for name, (factory, must_pass, end, rejected, support) in CONTROLS.items():
         r = run_investigation(FakeClient(factory()), scenario)
-        got = (r.passed, r.end_reason, len(r.rejected_findings))
-        ok = got == (must_pass, end, rejected)
+        got_support = tuple(f.support for f in r.findings)
+        got = (r.passed, r.end_reason, len(r.rejected_findings), got_support)
+        ok = got == (must_pass, end, rejected, support)
         failures += not ok
         print(f"control {name}: {'OK' if ok else 'WRONG'} passed={r.passed} end={r.end_reason} "
-              f"rejected={len(r.rejected_findings)} (want {must_pass}, {end}, {rejected})", file=out)
+              f"rejected={len(r.rejected_findings)} support={','.join(got_support) or '-'} "
+              f"(want {must_pass}, {end}, {rejected}, {','.join(support) or '-'})", file=out)
     return failures
 
 
@@ -77,6 +84,8 @@ def main(argv: list[str] | None = None, out=None) -> int:
         problems = check_main(report)
         if args.fake and report.rejected_findings:
             problems.append("reference run has rejected findings")
+        if args.fake and any(f.support != "supported" for f in report.findings):
+            problems.append("reference run has a finding whose check is not supported")
         for p in problems:
             print(f"  QUIZ FAIL: {p}", file=out)
         failed += bool(problems)

@@ -57,7 +57,7 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 ## D10. Scripted reference and four controls live in the package (2026-11-05)
 
-**Decision:** `scripted.py` holds the reference run for `checkout_latency` and four controls with their expected outcome: text only (fail, no_conclusion), conclude citing an invented id (fail, no_conclusion), a rejected finding then the reference (pass, 1 rejected finding), blame the red herring search deploy with real evidence (fail, concluded). Tests and `quiz_model.py --fake` both use them.
+**Decision:** `scripted.py` holds the reference run for `checkout_latency` and four controls (six from day 2, see D17) with their expected outcome: text only (fail, no_conclusion), conclude citing an invented id (fail, no_conclusion), a rejected finding then the reference (pass, 1 rejected finding), blame the red herring search deploy with real evidence (fail, concluded). Tests and `quiz_model.py --fake` both use them.
 **Why:** One definition means the quiz and the tests cannot disagree about what a control should score. The wrong service control shows that real citations alone are not enough to pass.
 
 ## D11. A real baseline path from day 1 (2026-11-05)
@@ -70,3 +70,33 @@ Each entry: what was decided, why, and what else was considered. New entries are
 
 **Decision:** Copy `llm.py` with only the env var renamed.
 **Why:** One folder, one project (week 03 D6). Same model as last week so results can be compared.
+
+## D13. Claims are checked through an optional structured `check`, not by reading the claim text (2026-11-06)
+
+**Decision:** `report_finding` takes an optional `check` object `{service, field, op, value, at?}`. Code compares it with the rows the finding cites and gives the finding a support status: `supported`, `contradicted`, `unsupported`, `invalid` or `unchecked` (no check given). Reports and JSON carry the status per finding and a count per status.
+**Why:** The day 1 gap was a finding that cites real ids that do not say what the claim says. Parsing free text claims ("p95 went way up") is the brittle keyword matching D8 already ruled out. A small structured check is something a 4B model can fill in from the row it just read, and it makes support a deterministic comparison, in the spirit of the AWS advice to pair agents with plain Python checks.
+**Alternatives:** An LLM judge for support (a second model to trust, and not deterministic), making `check` required (a small model that cannot fill it in would never record any finding; the rate of unchecked findings is itself a useful number), free text plus regex for numbers (cannot tell which row or time a number belongs to).
+
+## D14. Only cited rows count, and only after the ids are valid (2026-11-06)
+
+**Decision:** `check_support` looks at the cited rows only, never at the rest of the scenario. If any cited id is unknown the check is not judged (status `unchecked`) and the finding is rejected for the citation alone.
+**Why:** The question is "does the evidence the model chose back what it says", so a claim that happens to be true but cites the wrong rows must not pass. Judging a check on a partly invented citation list would mix two failures in one status and make the counts hard to read.
+**Alternatives:** Check the claim against all scenario rows (would accept a true claim with irrelevant citations, which is exactly what this day is meant to catch), judge on the valid subset of ids (hides the invented id behind a support status).
+
+## D15. Semantics: "some relevant cited row holds"; contradicted vs unsupported (2026-11-06)
+
+**Decision:** A cited row is relevant when its service matches, it has the field (metric name for metric rows, `level`/`message` for logs, `version`/`note` for deploys) and, if `at` is given, its time matches. `supported` if at least one relevant row satisfies the check, `contradicted` if relevant rows exist and none does, `unsupported` if no cited row is relevant. `>`, `>=`, `<`, `<=` need a number (a numeric string is converted); `==` and `contains` compare text case insensitively. Common spelled out operators (`gt`, `lte`, `eq`, `=`, `equals`) are accepted as aliases.
+**Why:** "At some cited time" without `at` matches how people write findings ("error rate reached 0.4") and `at` pins a claim to one moment when it matters. Splitting contradicted from unsupported separates a wrong reading of the right rows from citing the wrong rows, two different model mistakes. Aliases cost nothing and avoid rejecting a correct claim over spelling.
+**Alternatives:** "All relevant rows hold" (a claim about a spike would be contradicted by the calm rows the model cited for contrast, as in the reference's 230 to 2900 finding), time ranges (`from`/`to`; deferred until a scenario needs one).
+
+## D16. Anything but supported rejects the finding, with the rows named (2026-11-06)
+
+**Decision:** A finding whose check is contradicted, unsupported or invalid is rejected like an invalid citation (kept with `accepted=False`, D7) and the error spells out why, for example `claim contradicted: cited rows contradict checkout p95_latency_ms > 2000 at 14:00: ev_006 has 230`.
+**Why:** The PRD asked that such findings are "no longer accepted silently"; rejecting them with the actual values lets the model fix either the claim or the citation on the next turn, the same feedback loop as day 1.
+**Alternatives:** Accept and only flag (the conclusion could still rest on a contradicted finding with no pressure to fix it), end the run (too harsh for one misread number).
+
+## D17. Reference carries checks; two new controls (2026-11-06)
+
+**Decision:** Every reference finding now has a check that its cited rows support. Two controls are added: `contradicted_claim` (claims checkout p95 was above 2s at 14:00 citing the 230 ms row, then the reference) and `irrelevant_citation` (a db cpu claim citing the payments deploy row, then the reference). Both pass with one rejected finding. `CONTROLS` entries gain a fifth field, the expected support status of each finding in order, and `quiz_model.py --fake` checks it and that every reference finding is supported.
+**Why:** The controls prove both new rejection paths through the whole agent loop, not just in unit tests, and the per finding status tuple catches a regression that keeps counts right but labels wrong.
+**Alternatives:** Controls that end without the reference (would only test failure, not that the model can recover after the rejection).
