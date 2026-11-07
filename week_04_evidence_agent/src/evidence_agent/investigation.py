@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from .grading import grade
 from .ledger import EvidenceLedger
 from .support import CHECK_SCHEMA, INVALID, SUPPORTED, UNCHECKED, check_support, parse_check
 from .telemetry import KINDS, Scenario
@@ -93,6 +94,11 @@ class Report:
     evidence_issued: int
     root_cause_correct: bool
     passed: bool
+    grade: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def score(self) -> int:
+        return int(self.grade.get("score", 0))
 
     @property
     def accepted_findings(self) -> list[Finding]:
@@ -119,6 +125,7 @@ class Report:
         d["support"] = self.support_counts()
         d["accepted"] = len(self.accepted_findings)
         d["rejected"] = len(self.rejected_findings)
+        d["score"] = self.score
         return d
 
 
@@ -318,4 +325,6 @@ class Investigation:
             evidence_issued=len(self.ledger),
             root_cause_correct=correct,
             passed=correct and self.end_reason == "concluded",
+            grade=grade(self.scenario, self.ledger, self.conclusion,
+                        [f.support for f in self.findings], len(self.steps)),
         )

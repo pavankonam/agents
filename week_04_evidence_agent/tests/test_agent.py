@@ -2,8 +2,8 @@ import json
 
 from evidence_agent.agent import report_json, report_lines, run_investigation, system_prompt
 from evidence_agent.llm import FakeClient, LLMResponse, ToolCall
-from evidence_agent.scripted import CONTROLS, reference_checkout
-from evidence_agent.telemetry import CHECKOUT_LATENCY
+from evidence_agent.scripted import CONTROLS, control_scenario, reference_checkout
+from evidence_agent.telemetry import CHECKOUT_LATENCY, SCENARIOS
 
 
 def test_reference_passes_with_three_accepted_findings():
@@ -15,7 +15,7 @@ def test_reference_passes_with_three_accepted_findings():
 
 def test_controls_end_as_declared():
     for name, (factory, must_pass, end, rejected, _support) in CONTROLS.items():
-        r = run_investigation(FakeClient(factory()), CHECKOUT_LATENCY)
+        r = run_investigation(FakeClient(factory()), SCENARIOS[control_scenario(name)])
         assert (r.passed, r.end_reason, len(r.rejected_findings)) == (must_pass, end, rejected), name
 
 
@@ -72,7 +72,7 @@ def test_rejected_conclusion_is_a_refused_step_not_a_finding():
 
 def test_controls_support_statuses_as_declared():
     for name, (factory, _p, _e, _r, support) in CONTROLS.items():
-        r = run_investigation(FakeClient(factory()), CHECKOUT_LATENCY)
+        r = run_investigation(FakeClient(factory()), SCENARIOS[control_scenario(name)])
         assert tuple(f.support for f in r.findings) == support, name
 
 

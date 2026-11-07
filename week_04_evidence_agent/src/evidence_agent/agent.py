@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from .grading import score_line
 from .investigation import TOOLS, Investigation, Report
 from .llm import LLMClient
 from .telemetry import Scenario
@@ -81,6 +82,8 @@ def report_lines(report: Report) -> list[str]:
         lines.append(f"    {c['summary']}")
     else:
         lines.append("  conclusion: none")
+    if report.grade:
+        lines.append("  " + score_line(report.grade))
     return lines
 
 

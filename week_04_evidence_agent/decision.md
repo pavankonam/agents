@@ -100,3 +100,33 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Decision:** Every reference finding now has a check that its cited rows support. Two controls are added: `contradicted_claim` (claims checkout p95 was above 2s at 14:00 citing the 230 ms row, then the reference) and `irrelevant_citation` (a db cpu claim citing the payments deploy row, then the reference). Both pass with one rejected finding. `CONTROLS` entries gain a fifth field, the expected support status of each finding in order, and `quiz_model.py --fake` checks it and that every reference finding is supported.
 **Why:** The controls prove both new rejection paths through the whole agent loop, not just in unit tests, and the per finding status tuple catches a regression that keeps counts right but labels wrong.
 **Alternatives:** Controls that end without the reference (would only test failure, not that the model can recover after the rejection).
+
+## D18. Two scenarios built around the two classic wrong answers (2026-11-07)
+
+**Decision:** `config_push`: a gateway config push cuts the upstream timeout from 30 s to 300 ms while api p95 stays near 440 ms, so a third of requests get 503; the red herring is a worker CPU spike to 96% at 09:08 from a nightly reindex, two minutes before the first error. `dependency_outage`: an external `email_vendor` becomes unreachable at 16:18 and signups fail from 16:20; the first deploy of the afternoon (web, page copy, 16:10) is innocent and a second deploy (signup, 16:30) lands after the failures began. The question for this scenario even says "there was a deploy shortly before".
+**Why:** The PRD asked for a misleading CPU spike and an innocent first deploy, the two shortcuts an investigator (human or model) most often takes: blame the loudest metric, or blame the most recent change. In both scenarios the red herring rows are real and a claim about them is *supported*, so only the conclusion's service tells the runs apart. The root cause of `dependency_outage` has no deploy at all, which checkout_latency could not test.
+**Alternatives:** Random noise rows (day 6 adds seeded noise; today's scenarios should have one deliberate trap each), a scenario where the cause is in the db (too close to checkout_latency's pool story).
+
+## D19. Ground truth now marks the cause rows, and the ledger keeps each record's key (2026-11-07)
+
+**Decision:** `Scenario` gains `cause`, the indices of the rows that show the cause (deploy, error logs, failing metric of the root cause service), set by wrapping rows in `_Cause(...)` when the scenario is built. `Evidence` gains `key`, the record's index in the scenario, so grading can map a cited id back to a ground truth row.
+**Why:** "Cited evidence covers the cause" needs to know which rows are cause rows. Marking them inline next to the data keeps the marks from drifting when rows are added, and the ledger already had the key when it issued the id.
+**Alternatives:** Hand written index lists (break silently when a row is inserted), "any row of the root cause service" (a calm 13:55 payments metric would count as evidence of the cause).
+
+## D20. The rubric: 40 root cause, 30 cause evidence, 20 no contradicted claim, 10 efficiency (2026-11-07)
+
+**Decision:** `grading.py` scores each run out of 100: root cause service right (40), the conclusion cites at least one cause row (30), no finding was `contradicted`, accepted or rejected (20), steps within `reference_steps + 2`, then 2 points off per extra step down to 0 (10). Each criterion keeps its points, max and a one line detail. `Report` carries the grade, the JSON has `score` and `grade`, and `report_lines` prints `score N/100 (...)`. `passed` is unchanged (D8).
+**Why:** Pass/fail hides the difference between a model that names the right service for the wrong reasons and one that proves it. Cause evidence is checked on the conclusion only, because the conclusion is what an on call engineer reads. A contradicted finding counts even when it was rejected and fixed, because misreading a number is the mistake this week is measuring. `unsupported` is not penalised (the PRD named contradicted; an irrelevant citation that was rejected and replaced cost nothing in the end). Efficiency is small and has slack so a model that double checks is not punished for one extra query.
+**Alternatives:** Score from the summary text (D8 ruled that out), equal weights (efficiency would matter as much as the right answer), penalising `unsupported` too (left for day 6 when real model numbers show how common it is).
+
+## D21. No conclusion, no points (2026-11-07)
+
+**Decision:** A run without a conclusion scores 0 on every criterion, including "no contradicted claim" and efficiency.
+**Why:** Otherwise a model that answers in plain text after one step would get 30 points for doing nothing wrong and nothing quickly.
+**Alternatives:** Give efficiency and no_contradicted anyway (rewards giving up early).
+
+## D22. Controls per scenario and a declared score for every control (2026-11-07)
+
+**Decision:** `CONTROL_SCENARIO` maps a control to its scenario (default `checkout_latency`) and `CONTROL_SCORES` declares the score each control must get. Three new controls: `blame_cpu_spike` (config_push, a supported finding about the CPU spike, then conclude worker: fail, 30), `blame_first_deploy` (dependency_outage, conclude web citing its deploy: fail, 30) and `cause_not_cited` (dependency_outage, right service but citing only a signup row: pass, 70). `quiz_model.py --fake` checks every reference scores 100 and every control's score, and prints the score per scenario and the mean.
+**Why:** `cause_not_cited` is the case the rubric exists for: it passes and still loses 30 points. Declaring scores next to the controls keeps the quiz and the tests from disagreeing, as D10 did for outcomes. A separate mapping leaves the five field `CONTROLS` tuples unchanged.
+**Alternatives:** Add the scenario and score as fields six and seven of each tuple (every unpacking in tests and the quiz would change for no gain).

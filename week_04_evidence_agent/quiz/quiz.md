@@ -45,3 +45,24 @@ Answer: Yes. `gt` is an alias for `>`, and for numeric operators a numeric strin
 Verified: `OP_ALIASES` and the `float(value)` branch in `parse_check`; tests `test_parse_check_normalises_aliases_and_numbers` and `test_parse_check_errors`. **PASS**
 
 Day 2 result: 4/4 PASS (9/9 total).
+
+## Day 3 (2026-11-07)
+
+**Q10. On `dependency_outage` the model searches signup ERROR logs, then concludes `email_vendor` citing only `ev_001`. Passed? Score?**
+Answer: Passed (right service, valid citation, D8) but scores 70: root_cause 40, cause_evidence 0 because `ev_001` is a signup log row and none of the scenario's cause rows (all on `email_vendor`), no_contradicted 20, efficiency 10 (2 steps against a reference of 8).
+Verified: `grade` maps each cited id through `ledger.get(e).key` into `scenario.cause`; `_DEPENDENCY_CAUSE` holds only `email_vendor` rows (checked by `test_records_time_ordered_and_cause_rows_on_root_cause_service`). Control `cause_not_cited` declares 70 in `CONTROL_SCORES`; `quiz_model.py --fake` on 2026-11-07: `control cause_not_cited (dependency_outage): OK passed=True ... score=70`. **PASS**
+
+**Q11. The model answers in plain text after one query. What does it score on no_contradicted and efficiency?**
+Answer: 0 on both, and 0 overall: a run without a conclusion earns nothing (D21).
+Verified: `grade` returns early with every criterion at 0 and detail `no conclusion` when `conclusion is None`; test `test_no_conclusion_scores_zero_on_every_criterion`; control `text_only` scores 0. **PASS**
+
+**Q12. `contradicted_claim` misreads a row, gets the finding rejected, then follows the reference. It passes; what does it score and why?**
+Answer: 80. It loses the 20 for no_contradicted because a contradicted finding counts even when rejected (D20). Efficiency stays at 10: 8 steps against a reference of 7 is within the slack of 2.
+Verified: `grade` counts `CONTRADICTED` over the support status of all findings, not only accepted ones; `efficiency_points(8, 7)` is 10 since 8 is within 7 + 2. `test_contradicted_finding_costs_20_even_when_rejected`; `CONTROL_SCORES["contradicted_claim"] == 80` and the quiz printed `score=80`. **PASS**
+
+**Q13. On `config_push`, the model reports "worker cpu hit 96% at 09:08" citing the real 09:08 row with a check `worker cpu_pct > 90 at 09:08`. Is the finding accepted? Does the run pass?**
+Answer: The finding is accepted as `supported`, because the cited row really holds 96. The run still fails when it concludes `worker`: the root cause is `gateway`. Score 30 (no_contradicted 20 and efficiency 10 only). A true claim about a red herring is not evidence of the cause (D18).
+Verified: control `blame_cpu_spike` expects `(False, "concluded", 0, (S,))` and score 30; quiz output on 2026-11-07 `control blame_cpu_spike (config_push): OK passed=False ... support=supported score=30`. **PASS**
+
+Day 3 result: 4/4 PASS (13/13 total).
+

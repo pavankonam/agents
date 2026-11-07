@@ -17,6 +17,7 @@ class Evidence:
     record: Record
     first_tool: str  # the tool call that first returned it
     first_step: int
+    key: int = -1  # index of the record in the scenario (used by grading, D19)
 
 
 class EvidenceLedger:
@@ -29,7 +30,7 @@ class EvidenceLedger:
         if key in self._by_key:
             return self._by_key[key]
         eid = f"ev_{len(self._by_id) + 1:03d}"
-        self._by_id[eid] = Evidence(eid, record, tool, step)
+        self._by_id[eid] = Evidence(eid, record, tool, step, key)
         self._by_key[key] = eid
         return eid
 

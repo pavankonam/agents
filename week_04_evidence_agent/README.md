@@ -2,7 +2,7 @@
 
 An **incident investigation agent** on a **free local model through Ollama** whose every claim has to be backed by something it actually retrieved. It queries synthetic telemetry (logs, metrics, deploys) through tools; every row a tool shows carries an evidence id like `ev_003`; findings and the final conclusion must cite those ids, and code rejects any citation the run never issued. The verdict comes from the scenario's ground truth, never from the model's summary. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 2 (2026-11-06). One scenario (`checkout_latency`: a payments deploy shrinks the db pool, checkout times out, with a search deploy and a cache warning as red herrings), the evidence ledger, four query tools and two citing tools, citation checks, **claim support checks** (a finding can carry a structured `check` that is verified against the rows it cites), the agent loop, a CLI, a scripted reference and six controls, a model quiz, 58 tests. Next: two more scenarios and a grading rubric (day 3).
+**Status:** Day 3 (2026-11-07). Three scenarios, each with a trap: `checkout_latency` (a payments deploy shrinks the db pool; a search deploy and a cache warning are red herrings), `config_push` (a gateway config push cuts the upstream timeout to 300 ms; a worker CPU spike is the red herring) and `dependency_outage` (an external email vendor goes down; the first deploy is innocent). The evidence ledger, four query tools and two citing tools, citation checks, claim support checks, a **grading rubric with a score out of 100 per run**, the agent loop, a CLI, a scripted reference per scenario and nine controls, a model quiz, 71 tests. Next: bounds and a kill switch (day 4).
 
 ## Run it
 
@@ -14,6 +14,8 @@ export PYTHONPATH=src
 python3 -m evidence_agent list                      # scenarios
 python3 -m evidence_agent check                     # is Ollama up and the model pulled?
 python3 -m evidence_agent run checkout_latency      # one investigation with qwen3:4b
+python3 -m evidence_agent run config_push
+python3 -m evidence_agent run dependency_outage
 python3 -m evidence_agent run checkout_latency --json
 EVIDENCE_AGENT_MODEL=llama3.2 python3 -m evidence_agent run checkout_latency --max-steps 8
 ```
@@ -24,7 +26,7 @@ EVIDENCE_AGENT_MODEL=llama3.2 python3 -m evidence_agent run checkout_latency --m
 python3 quiz/quiz_model.py --record results/qwen3_4b.jsonl
 ```
 
-This appends one JSON report per scenario to `results/qwen3_4b.jsonl`, with every finding, accepted or rejected, and the conclusion. The daily automation cannot reach Ollama on the Mac, so the real numbers depend on this run (D11).
+This appends one JSON report per scenario (now three, each with its `score`) to `results/qwen3_4b.jsonl`, with every finding, accepted or rejected, and the conclusion. The daily automation cannot reach Ollama on the Mac, so the real numbers depend on this run (D11).
 
 | Exit code | Meaning |
 | --- | --- |
@@ -40,7 +42,20 @@ python3 -m pytest -q
 python3 quiz/quiz_model.py --fake
 ```
 
-`--fake` plays the scripted reference (must pass with no rejected finding and every check supported) and six controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, and a finding citing a real but unrelated row. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding.
+`--fake` plays the scripted reference of every scenario (must pass with no rejected finding, every check supported and a score of 100) and nine controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, a finding citing a real but unrelated row, blaming the CPU spike on `config_push`, blaming the innocent first deploy on `dependency_outage`, and naming the right service while citing no cause row. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding and its rubric score.
+
+## Grading rubric (day 3)
+
+`passed` is strict: concluded with the true root cause service. The **score** says how good the investigation was:
+
+| Criterion | Points | Earned when |
+| --- | --- | --- |
+| root_cause | 40 | the conclusion names the true root cause service |
+| cause_evidence | 30 | the conclusion cites at least one row that shows the cause |
+| no_contradicted | 20 | no finding, accepted or rejected, was contradicted by its rows |
+| efficiency | 10 | steps within the reference + 2; then 2 points off per extra step |
+
+A run without a conclusion scores 0. Example: `cause_not_cited` names `email_vendor` correctly but cites only a signup log, so it passes with 70.
 
 ## Claim support (day 2)
 
@@ -66,7 +81,8 @@ A finding may carry a `check`, the claim in a form code can verify against the r
 
 | File | What it does |
 | --- | --- |
-| `src/evidence_agent/telemetry.py` | `Record`, `Scenario`, the `checkout_latency` data |
+| `src/evidence_agent/telemetry.py` | `Record`, `Scenario`, the three scenarios with cause rows marked |
+| `src/evidence_agent/grading.py` | rubric: score out of 100 per run, per criterion detail |
 | `src/evidence_agent/ledger.py` | `EvidenceLedger`: issues `ev_NNN` ids, the only citable ids |
 | `src/evidence_agent/support.py` | claim checks: parse, compare against the cited rows, support status |
 | `src/evidence_agent/investigation.py` | tools, argument validation, citation checks, findings, verdict |

@@ -14,6 +14,8 @@ def run(argv, client=None):
 def test_list():
     code, text = run(["list"])
     assert code == 0 and text.startswith("checkout_latency: Checkout is slow")
+    assert [line.split(":")[0] for line in text.splitlines()] == [
+        "checkout_latency", "config_push", "dependency_outage"]
 
 
 def test_run_pass_and_fail_codes():
