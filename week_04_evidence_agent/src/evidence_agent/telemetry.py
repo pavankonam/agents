@@ -40,6 +40,8 @@ class Scenario:
     cause: tuple[int, ...] = ()
     # tool calls the scripted reference needs; the efficiency criterion counts from it (D20)
     reference_steps: int = 0
+    # the incident window (start, end) as HH:MM; queries outside it are refused (D24)
+    window: tuple[str, str] = ("00:00", "23:59")
 
     @property
     def services(self) -> list[str]:
@@ -107,6 +109,7 @@ CHECKOUT_LATENCY = Scenario(
     root_cause_service="payments",
     cause=_CHECKOUT_CAUSE,
     reference_steps=7,
+    window=("13:45", "14:15"),
 )
 
 # A gateway config push cuts the upstream timeout below the api's normal latency.
@@ -142,6 +145,7 @@ CONFIG_PUSH = Scenario(
     root_cause_service="gateway",
     cause=_CONFIG_CAUSE,
     reference_steps=7,
+    window=("08:55", "09:20"),
 )
 
 # An external email vendor goes down. The first deploy of the afternoon (web, page copy)
@@ -175,6 +179,7 @@ DEPENDENCY_OUTAGE = Scenario(
     root_cause_service="email_vendor",
     cause=_DEPENDENCY_CAUSE,
     reference_steps=8,
+    window=("15:55", "16:35"),
 )
 
 SCENARIOS: dict[str, Scenario] = {

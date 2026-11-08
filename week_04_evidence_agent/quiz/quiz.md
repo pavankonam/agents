@@ -66,3 +66,23 @@ Verified: control `blame_cpu_spike` expects `(False, "concluded", 0, (S,))` and 
 
 Day 3 result: 4/4 PASS (13/13 total).
 
+
+## Day 4 (2026-11-08)
+
+**Q14. With `max_queries=2` the model runs `list_deploys`, a payments ERROR search, then `get_metric(checkout, p95_latency_ms)`. What happens to the third call, and what is in the audit log after it concludes on the first two queries?**
+Answer: Refused with `query budget of 2 used up; report findings or conclude with the evidence you already have`. It is step 3, counts as a refused step, issues no ids and `queries_used` stays 2. The audit log is `(3, refused, query_budget, system)` then `(6, stop, concluded, agent)`; the run passes with score 100.
+Verified: `_bound_problem` checks `queries_used >= max_queries` before the window and appends the refused entry; control `over_budget` declares exactly that audit in `CONTROL_AUDIT`; `quiz_model.py --fake` on 2026-11-08: `control over_budget (checkout_latency): OK ... score=100 audit=ok`. **PASS**
+
+**Q15. On `checkout_latency` the first call is `search_logs(service="payments", level="ERROR", since="12:00")`. Refused? Does it spend budget? What would `since="14:05", until="14:10"` on the checkout p95 metric show?**
+Answer: Refused as `time_window`: `since 12:00 is outside the incident window 13:45 to 14:15; queries outside the window are refused`. It spends no budget (budget is only spent after both checks pass). The narrowed metric query shows only the 14:05 (2900) and 14:10 (3100) rows.
+Verified: `window_problem` returns that text; `queries_used += 1` happens only after it returns ""; `_rows` filters on `since <= ts <= until`. Tests `test_window_refusal_spends_no_budget_and_since_until_filter_rows` and `test_window_problem`; control `out_of_window` audit `(1, refused, time_window, system)`. **PASS**
+
+**Q16. The operator trips the kill switch while the model is producing its third turn of the reference run. Does the tool call of that turn run? End reason, steps, score, audit?**
+Answer: No. `Investigation.call` checks the switch first, so the call is dropped and is not a step. End `killed`, 2 steps, 4 evidence ids, 2 of 8 queries, no conclusion, score 0. Audit: one entry `step 2 stop killed by oncall:pavan: incident handed to a human responder`.
+Verified: `call` returns `investigation stopped by ...` with `done=True` before appending a `StepLog`; `KillingClient` triggers after its third `chat`; `test_operator_kill_control_report` asserts the line and JSON; quiz output `control operator_kill ... end=killed ... score=0 audit=ok`. **PASS**
+
+**Q17. Which tools spend the query budget? Does `get_metric(service="checkout")` without a metric name cost one?**
+Answer: `search_logs`, `get_metric` and `list_deploys` (`QUERY_TOOLS`). `list_services`, `report_finding` and `conclude` are free. `get_metric` without a metric only lists names but still costs a query, because the budget counts by tool name (D23).
+Verified: `QUERY_TOOLS` in `bounds.py`; `call` runs `_bound_problem` for any `name in QUERY_TOOLS` after validation; `test_query_budget_refuses_and_audits_without_spending` shows `list_services` succeeding with the budget used up. **PASS**
+
+Day 4 result: 4/4 PASS (17/17 total).

@@ -4,12 +4,17 @@ Each scenario has a reference run, what a careful investigator does: every
 finding carries a check that its cited rows support (D17) and the conclusion
 cites a row that shows the cause, so it scores 100 (D19). The controls each
 break one rule; how they must end is in CONTROLS, which scenario they run on
-in CONTROL_SCENARIO and their rubric score in CONTROL_SCORES.
+in CONTROL_SCENARIO and their rubric score in CONTROL_SCORES. The day 4
+controls also run with bounds (CONTROL_OPTIONS) and declare their audit log
+(CONTROL_AUDIT); make_control builds the client and run options for any control.
 """
 
 from __future__ import annotations
 
-from .llm import LLMResponse, ToolCall
+from typing import Any
+
+from .bounds import KillSwitch
+from .llm import FakeClient, LLMResponse, ToolCall
 
 
 def _call(name: str, **args) -> LLMResponse:
@@ -176,6 +181,48 @@ def control_cause_not_cited() -> list[LLMResponse]:
                   evidence_ids=["ev_001"])]
 
 
+def control_over_budget() -> list[LLMResponse]:
+    """Budget of 2: the third query is refused, the model concludes on what it has (D23)."""
+    return [
+        _call("list_deploys"),                                    # ev_001 search, ev_002 payments
+        _call("search_logs", service="payments", level="ERROR"),  # ev_003, ev_004
+        _call("get_metric", service="checkout", metric="p95_latency_ms"),  # refused: budget
+    ] + _findings_and_conclusion()[:2] + [
+        _call("conclude", root_cause_service="payments",
+              summary="The payments v2.3.1 deploy shrank the db pool to 5 and payments "
+                      "cannot get a db connection.",
+              evidence_ids=["ev_002", "ev_003"])]
+
+
+def control_out_of_window() -> list[LLMResponse]:
+    """A query from 12:00 is outside the 13:45 to 14:15 window and is refused (D24)."""
+    return [_call("search_logs", service="payments", level="ERROR", since="12:00")] + \
+        reference_checkout()
+
+
+class KillingClient(FakeClient):
+    """Plays a script; an operator trips the kill switch while the model works on
+    turn `on_turn` (1 based), so the calls of that turn never run (D25)."""
+
+    def __init__(self, responses: list[LLMResponse], switch: KillSwitch, on_turn: int,
+                 by: str, reason: str):
+        super().__init__(responses)
+        self.switch, self.on_turn, self.by, self.reason = switch, on_turn, by, reason
+
+    def chat(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
+        resp = super().chat(messages, tools)
+        if len(self.calls) == self.on_turn:
+            self.switch.trigger(self.by, self.reason)
+        return resp
+
+
+KILL_BY, KILL_REASON = "oncall:pavan", "incident handed to a human responder"
+
+
+def control_operator_kill() -> list[LLMResponse]:
+    return reference_checkout()
+
+
 S, C, U, N = "supported", "contradicted", "unsupported", "unchecked"
 
 # name -> (responses factory, must pass, expected end reason, expected rejected findings,
@@ -190,6 +237,9 @@ CONTROLS = {
     "blame_cpu_spike": (control_blame_cpu_spike, False, "concluded", 0, (S,)),
     "blame_first_deploy": (control_blame_first_deploy, False, "concluded", 0, ()),
     "cause_not_cited": (control_cause_not_cited, True, "concluded", 0, ()),
+    "over_budget": (control_over_budget, True, "concluded", 0, (S, S)),
+    "out_of_window": (control_out_of_window, True, "concluded", 0, (S, S, S)),
+    "operator_kill": (control_operator_kill, False, "killed", 0, ()),
 }
 
 # which scenario each control runs on (default checkout_latency)
@@ -199,8 +249,48 @@ CONTROL_SCENARIO = {"blame_cpu_spike": "config_push", "blame_first_deploy": "dep
 # the rubric score each control must get (D19 to D21); every reference must score 100
 CONTROL_SCORES = {"text_only": 0, "invented_id": 0, "rejected_then_fixed": 100,
                   "wrong_service": 30, "contradicted_claim": 80, "irrelevant_citation": 100,
-                  "blame_cpu_spike": 30, "blame_first_deploy": 30, "cause_not_cited": 70}
+                  "blame_cpu_spike": 30, "blame_first_deploy": 30, "cause_not_cited": 70,
+                  "over_budget": 100, "out_of_window": 100, "operator_kill": 0}
+
+# run options of the bounded controls (D27); the rest run with the defaults
+CONTROL_OPTIONS: dict[str, dict[str, Any]] = {
+    "over_budget": {"max_queries": 2},
+    "operator_kill": {"kill_on_turn": 3},
+}
+
+# the audit log each control must leave, as (step, event, rule, actor); controls not
+# listed must leave exactly one entry: the stop with their end reason (D26, D27)
+CONTROL_AUDIT = {
+    "over_budget": (
+        (3, "refused", "query_budget", "system"), (6, "stop", "concluded", "agent")),
+    "out_of_window": (
+        (1, "refused", "time_window", "system"), (8, "stop", "concluded", "agent")),
+    "operator_kill": ((2, "stop", "killed", KILL_BY),),
+}
 
 
 def control_scenario(name: str) -> str:
     return CONTROL_SCENARIO.get(name, "checkout_latency")
+
+
+def make_control(name: str) -> tuple[FakeClient, dict[str, Any]]:
+    """The scripted client and the run_investigation options for one control."""
+    factory = CONTROLS[name][0]
+    opts = dict(CONTROL_OPTIONS.get(name, {}))
+    turn = opts.pop("kill_on_turn", None)
+    if turn is None:
+        return FakeClient(factory()), opts
+    switch = KillSwitch()
+    opts["kill_switch"] = switch
+    return KillingClient(factory(), switch, turn, KILL_BY, KILL_REASON), opts
+
+
+def audit_tuples(report) -> tuple[tuple[int, str, str, str], ...]:
+    return tuple((a.step, a.event, a.rule, a.actor) for a in report.audit)
+
+
+def expected_audit(name: str, steps: int) -> tuple[tuple[int, str, str, str], ...]:
+    if name in CONTROL_AUDIT:
+        return CONTROL_AUDIT[name]
+    end = CONTROLS[name][2]
+    return ((steps, "stop", end, "agent" if end in ("concluded", "no_conclusion") else "system"),)

@@ -21,7 +21,11 @@ contradicted or unsupported (D10, D17). Three controls run on the day 3
 scenarios: blaming the worker CPU spike on config_push, blaming the innocent
 first deploy on dependency_outage, and naming the right service while citing
 no row that shows the cause. Every control must also get the rubric score
-CONTROL_SCORES declares (D22).
+CONTROL_SCORES declares (D22). Three controls run with bounds (D27): a query
+budget of 2 that refuses the third query, a query from before the incident
+window, and an operator kill during the third model turn. Every control must
+also leave exactly the audit log it declares (refusals and the one stop, with
+who and why).
 
 Live runs print the claim support counts per scenario (D13).
 
@@ -41,7 +45,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from evidence_agent.agent import report_json, report_lines, run_investigation  # noqa: E402
 from evidence_agent.llm import DEFAULT_MODEL, FakeClient, OllamaClient, check_ollama  # noqa: E402
-from evidence_agent.scripted import CONTROL_SCORES, CONTROLS, REFERENCE, control_scenario  # noqa: E402
+from evidence_agent.scripted import (CONTROL_SCORES, CONTROLS, REFERENCE, audit_tuples,  # noqa: E402
+                                     control_scenario, expected_audit, make_control)
 from evidence_agent.telemetry import SCENARIOS  # noqa: E402
 
 
@@ -58,15 +63,18 @@ def run_controls(out) -> int:
     failures = 0
     for name, (factory, must_pass, end, rejected, support) in CONTROLS.items():
         scenario = SCENARIOS[control_scenario(name)]
-        r = run_investigation(FakeClient(factory()), scenario)
+        client, opts = make_control(name)
+        r = run_investigation(client, scenario, **opts)
         got_support = tuple(f.support for f in r.findings)
         got = (r.passed, r.end_reason, len(r.rejected_findings), got_support, r.score)
         want_score = CONTROL_SCORES[name]
-        ok = got == (must_pass, end, rejected, support, want_score)
+        audit_ok = audit_tuples(r) == expected_audit(name, len(r.steps))
+        ok = got == (must_pass, end, rejected, support, want_score) and audit_ok
         failures += not ok
         print(f"control {name} ({scenario.name}): {'OK' if ok else 'WRONG'} passed={r.passed} "
               f"end={r.end_reason} rejected={len(r.rejected_findings)} "
               f"support={','.join(got_support) or '-'} score={r.score} "
+              f"audit={'ok' if audit_ok else 'WRONG'} "
               f"(want {must_pass}, {end}, {rejected}, {','.join(support) or '-'}, "
               f"{want_score})", file=out)
     return failures
@@ -99,6 +107,8 @@ def main(argv: list[str] | None = None, out=None) -> int:
             problems.append("reference run has a finding whose check is not supported")
         if args.fake and report.score != 100:
             problems.append(f"reference run scored {report.score}, not 100")
+        if args.fake and [(a.event, a.rule) for a in report.audit] != [("stop", "concluded")]:
+            problems.append("reference audit log is not exactly one concluded stop")
         scores[name] = report.score
         for p in problems:
             print(f"  QUIZ FAIL: {p}", file=out)

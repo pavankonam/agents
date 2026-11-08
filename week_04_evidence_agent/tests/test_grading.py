@@ -6,7 +6,7 @@ from evidence_agent.investigation import Investigation
 from evidence_agent.ledger import EvidenceLedger
 from evidence_agent.llm import FakeClient
 from evidence_agent.scripted import (CONTROL_SCORES, CONTROLS, REFERENCE, control_scenario,
-                                     reference_checkout)
+                                     make_control, reference_checkout)
 from evidence_agent.telemetry import CHECKOUT_LATENCY, SCENARIOS
 
 
@@ -24,8 +24,9 @@ def test_every_reference_scores_100_in_its_reference_steps():
 
 def test_every_control_scores_as_declared():
     assert set(CONTROL_SCORES) == set(CONTROLS)
-    for name, (factory, *_rest) in CONTROLS.items():
-        r = run_investigation(FakeClient(factory()), SCENARIOS[control_scenario(name)])
+    for name in CONTROLS:
+        client, opts = make_control(name)
+        r = run_investigation(client, SCENARIOS[control_scenario(name)], **opts)
         assert r.score == CONTROL_SCORES[name], name
 
 
@@ -68,7 +69,7 @@ def test_contradicted_finding_costs_20_even_when_rejected():
 
 def test_score_in_lines_and_json():
     r = run_investigation(FakeClient(reference_checkout()), CHECKOUT_LATENCY)
-    assert report_lines(r)[-1] == "  " + score_line(r.grade)
+    assert report_lines(r)[-2] == "  " + score_line(r.grade)
     assert score_line(r.grade).startswith("score 100/100 (root_cause 40/40, cause_evidence 30/30")
     d = json.loads(report_json(r))
     assert d["score"] == 100 and d["grade"]["criteria"]["efficiency"]["detail"] == \

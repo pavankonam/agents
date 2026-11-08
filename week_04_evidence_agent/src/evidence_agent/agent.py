@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from .bounds import DEFAULT_MAX_QUERIES, KillSwitch
 from .grading import score_line
 from .investigation import TOOLS, Investigation, Report
 from .llm import LLMClient
@@ -23,22 +24,32 @@ Rules:
   A check that your cited rows contradict or do not cover rejects the finding.
 - When you know the cause, call conclude with the root cause service, a short summary
   and the evidence ids. A plain text answer does not count as a conclusion.
-- You have at most {max_steps} tool calls. Services: {services}."""
+- You have at most {max_steps} tool calls, of which at most {max_queries} may be queries
+  (search_logs, get_metric, list_deploys). Plan them; extra queries are refused.
+- The incident window is {start} to {end}. since and until must lie inside it.
+- An operator can stop you at any time. Services: {services}."""
 
 
-def system_prompt(scenario: Scenario, max_steps: int) -> str:
-    return SYSTEM_PROMPT.format(max_steps=max_steps, services=", ".join(scenario.services))
+def system_prompt(scenario: Scenario, max_steps: int,
+                  max_queries: int = DEFAULT_MAX_QUERIES) -> str:
+    start, end = scenario.window
+    return SYSTEM_PROMPT.format(max_steps=max_steps, max_queries=max_queries, start=start,
+                                end=end, services=", ".join(scenario.services))
 
 
 def run_investigation(llm: LLMClient, scenario: Scenario, max_steps: int = 12,
-                      max_turns: int | None = None) -> Report:
-    inv = Investigation(scenario, max_steps=max_steps)
+                      max_turns: int | None = None, max_queries: int = DEFAULT_MAX_QUERIES,
+                      kill_switch: KillSwitch | None = None) -> Report:
+    inv = Investigation(scenario, max_steps=max_steps, max_queries=max_queries,
+                        kill_switch=kill_switch)
     messages = [
-        {"role": "system", "content": system_prompt(scenario, max_steps)},
+        {"role": "system", "content": system_prompt(scenario, max_steps, max_queries)},
         {"role": "user", "content": scenario.question},
     ]
     turns = max_turns if max_turns is not None else max_steps + 2
     for _ in range(turns):
+        if inv.check_kill():  # an operator stop is honoured before the model is asked again
+            break
         resp = llm.chat(messages, TOOLS)
         msg: dict = {"role": "assistant", "content": resp.content}
         if resp.tool_calls:
@@ -64,7 +75,8 @@ def run_investigation(llm: LLMClient, scenario: Scenario, max_steps: int = 12,
 def report_lines(report: Report) -> list[str]:
     lines = [f"scenario {report.scenario}: {'PASS' if report.passed else 'FAIL'} "
              f"(end {report.end_reason}, {len(report.steps)} steps, "
-             f"{report.evidence_issued} evidence ids issued)"]
+             f"{report.evidence_issued} evidence ids issued, "
+             f"{report.queries_used}/{report.max_queries} queries)"]
     for f in report.findings:
         mark = "accepted" if f.accepted else "REJECTED"
         lines.append(f"  finding [{mark}, {f.support}] {f.claim!r} cites "
@@ -84,6 +96,8 @@ def report_lines(report: Report) -> list[str]:
         lines.append("  conclusion: none")
     if report.grade:
         lines.append("  " + score_line(report.grade))
+    for entry in report.audit:
+        lines.append("  audit: " + entry.line())
     return lines
 
 

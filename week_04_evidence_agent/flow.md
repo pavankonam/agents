@@ -1,17 +1,25 @@
 # Flow: Evidence Agent
 
-Status: **Day 3**. Every box exists in the code.
+Status: **Day 4**. Every box exists in the code.
 
 ```mermaid
 flowchart TD
-    CLI[python3 -m evidence_agent<br/>list, check, run SCENARIO<br/>--json --record PATH] --> RI
-    QM[quiz/quiz_model.py<br/>reference run per scenario, must score 100,<br/>9 controls in --fake over 3 scenarios<br/>with support status and score,<br/>--record PATH] --> RI
-    RI[run_investigation<br/>agent.py] -->|system prompt + question| M[LLM client.chat<br/>OllamaClient or FakeClient<br/>6 tools]
+    CLI[python3 -m evidence_agent<br/>list, check, run SCENARIO<br/>--json --record PATH<br/>--max-queries N --kill-file PATH --audit PATH] --> RI
+    QM[quiz/quiz_model.py<br/>reference run per scenario, must score 100,<br/>12 controls in --fake over 3 scenarios<br/>with support status, score and audit log,<br/>--record PATH] --> RI
+    OP([operator<br/>KillSwitch.trigger who, why<br/>or --kill-file]) -.->|trips| KS{kill switch<br/>tripped?}
+    RI[run_investigation<br/>agent.py] -->|before each turn| KS
+    KS -->|no| M[LLM client.chat<br/>OllamaClient or FakeClient<br/>6 tools, prompt states budget and window]
+    KS -->|yes| KL[finish killed<br/>actor = operator]
     M -->|text only| NC[finish no_conclusion]
-    M -->|tool calls, in order| CALL{Investigation.call}
+    M -->|tool calls, in order| KC{kill switch<br/>tripped?}
+    KC -->|yes, call never runs| KL
+    KC -->|no| CALL{Investigation.call}
     CALL -->|unknown tool or<br/>validate_args fails| REF[refused step<br/>error back to model]
     CALL -->|list_services| SV[service names<br/>no evidence ids]
-    CALL -->|search_logs, get_metric,<br/>list_deploys| Q[filter scenario records]
+    CALL -->|search_logs, get_metric,<br/>list_deploys| BD{bounds<br/>budget left?<br/>since/until inside<br/>incident window?}
+    BD -->|no| BR[refused step<br/>AuditEntry refused<br/>query_budget or time_window]
+    BR --> LIM
+    BD -->|yes, spend 1 query| Q[filter scenario records<br/>by since/until]
     Q --> LED[EvidenceLedger.issue<br/>ev_NNN by first sight,<br/>same record same id,<br/>only shown rows]
     LED --> ROWS["lines like [ev_003] 14:05 payments ERROR ..."]
     CALL -->|report_finding| CIT{citations ok?<br/>claim not empty,<br/>ids non empty,<br/>all issued by ledger}
@@ -36,12 +44,13 @@ flowchart TD
     LIM -->|no| RI
     RI -->|turns used up| TL[finish turn_limit]
     NC --> REP
+    KL --> REP
     END --> REP
     SL --> REP
     TL --> REP
-    REP[Investigation.report<br/>root_cause_correct = conclusion service<br/>== scenario ground truth<br/>passed = concluded and correct]
+    REP[Investigation.report<br/>every end goes through _end:<br/>one AuditEntry stop with rule,<br/>actor and reason<br/>root_cause_correct = conclusion service<br/>== scenario ground truth<br/>passed = concluded and correct]
     REP --> GR[grading.grade<br/>no conclusion: 0<br/>root_cause 40, cause_evidence 30<br/>via ledger key in scenario.cause,<br/>no_contradicted 20,<br/>efficiency 10 vs reference_steps + 2]
-    GR --> OUT[report_lines or report_json<br/>accepted and REJECTED findings<br/>with support status, support counts,<br/>conclusion, refused steps,<br/>score N/100 per criterion]
+    GR --> OUT[report_lines or report_json<br/>accepted and REJECTED findings<br/>with support status, support counts,<br/>conclusion, refused steps,<br/>score N/100 per criterion,<br/>queries N/M, audit lines]
 ```
 
 ## How it works
@@ -55,3 +64,5 @@ flowchart TD
 4. A finding can carry a **check** (`support.py`): service, field, op, value and an optional `at` time. If its ids are real, the check is compared with the **cited rows only**. One relevant row that holds makes it `supported`; relevant rows that all fail make it `contradicted`; no relevant row makes it `unsupported`; a malformed check is `invalid`. Anything but `supported` rejects the finding, and the error names the rows and their values so the model can fix the claim or cite better rows (D13 to D16). A finding without a check stays `unchecked` and is accepted on its citations alone.
 5. The **verdict** is computed by `Investigation.report()` from the ground truth: the run passes only when it concluded with the right service (D8). The model never sees the verdict.
 6. The **score** (`grading.py`, D19 to D21) grades the same run out of 100: right service (40), the conclusion cites at least one cause row, found by mapping each cited id to its record key through the ledger (30), no finding was contradicted, even one that was rejected and fixed (20), and steps within the reference plus 2, losing 2 points per extra step (10). A run without a conclusion scores 0. A run can pass and still score 70 when it names the right service but cites no row that shows the cause.
+7. **Bounds** (`bounds.py`, D23 to D26). `search_logs`, `get_metric` and `list_deploys` spend one query each from a budget (default 8); once it is used up they are refused. `since`/`until` on those tools must be HH:MM inside the scenario's incident window and filter the rows; anything else is refused. Refused queries spend nothing. A **kill switch** tripped by an operator (in code, from another thread, or by creating the `--kill-file`) is checked before every model turn and every tool call; the run ends as `killed` and the pending call never runs.
+8. The **audit log** has one `stop` entry per run, written by the single `_end` choke point with the rule (`concluded`, `no_conclusion`, `step_limit`, `turn_limit`, `killed`), the actor (`agent`, `system` or the operator's name) and the reason, plus a `refused` entry for every budget or window refusal. It is in the printed report, the JSON, and with `--audit PATH` in a JSONL file.
