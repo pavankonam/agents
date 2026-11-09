@@ -8,6 +8,7 @@ from .bounds import DEFAULT_MAX_QUERIES, KillSwitch
 from .grading import score_line
 from .investigation import TOOLS, Investigation, Report
 from .llm import LLMClient
+from .memory import KEPT, FindingMemory
 from .telemetry import Scenario
 
 SYSTEM_PROMPT = """You are an incident investigator. You find the root cause of a production problem
@@ -39,12 +40,21 @@ def system_prompt(scenario: Scenario, max_steps: int,
 
 def run_investigation(llm: LLMClient, scenario: Scenario, max_steps: int = 12,
                       max_turns: int | None = None, max_queries: int = DEFAULT_MAX_QUERIES,
-                      kill_switch: KillSwitch | None = None) -> Report:
+                      kill_switch: KillSwitch | None = None,
+                      memory: FindingMemory | None = None) -> Report:
+    """Run one investigation. With `memory`, remembered findings are re-checked and
+    recalled before the first turn, and the run's supported findings are stored after
+    it (in memory; the caller saves the file) (D28 to D32)."""
     inv = Investigation(scenario, max_steps=max_steps, max_queries=max_queries,
                         kill_switch=kill_switch)
+    question = scenario.question
+    if memory is not None:
+        note = inv.preload(memory.recall(scenario))
+        if note:
+            question = f"{question}\n\n{note}"
     messages = [
         {"role": "system", "content": system_prompt(scenario, max_steps, max_queries)},
-        {"role": "user", "content": scenario.question},
+        {"role": "user", "content": question},
     ]
     turns = max_turns if max_turns is not None else max_steps + 2
     for _ in range(turns):
@@ -69,6 +79,8 @@ def run_investigation(llm: LLMClient, scenario: Scenario, max_steps: int = 12,
         if inv.done:
             break
     inv.finish("turn_limit")
+    if memory is not None:
+        inv.remembered = memory.remember(scenario, inv.findings, inv.ledger)
     return inv.report()
 
 
@@ -77,6 +89,11 @@ def report_lines(report: Report) -> list[str]:
              f"(end {report.end_reason}, {len(report.steps)} steps, "
              f"{report.evidence_issued} evidence ids issued, "
              f"{report.queries_used}/{report.max_queries} queries)"]
+    for r in report.recall:
+        if r.status == KEPT:
+            lines.append(f"  recall: kept {r.claim!r} as {', '.join(r.ids)}")
+        else:
+            lines.append(f"  recall: dropped {r.claim!r}: {r.reason}")
     for f in report.findings:
         mark = "accepted" if f.accepted else "REJECTED"
         lines.append(f"  finding [{mark}, {f.support}] {f.claim!r} cites "
@@ -98,6 +115,10 @@ def report_lines(report: Report) -> list[str]:
         lines.append("  " + score_line(report.grade))
     for entry in report.audit:
         lines.append("  audit: " + entry.line())
+    if report.recall or report.remembered:
+        kept, dropped = report.recall_counts
+        lines.append(f"  memory: recalled {kept}, dropped {dropped}, "
+                     f"stored {report.remembered} verified finding(s)")
     return lines
 
 

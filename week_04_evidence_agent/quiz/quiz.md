@@ -86,3 +86,24 @@ Answer: `search_logs`, `get_metric` and `list_deploys` (`QUERY_TOOLS`). `list_se
 Verified: `QUERY_TOOLS` in `bounds.py`; `call` runs `_bound_problem` for any `name in QUERY_TOOLS` after validation; `test_query_budget_refuses_and_audits_without_spending` shows `list_services` succeeding with the budget used up. **PASS**
 
 Day 4 result: 4/4 PASS (17/17 total).
+
+
+## Day 5 (2026-11-09)
+
+**Q18. After the checkout reference run with a memory, which findings are stored, and which rows does the third one keep?**
+Answer: All three, because each was accepted and its check was `supported`. The third ("checkout p95 went from 230ms to 2900ms at 14:05") cited the 14:00 and 14:05 rows, but only the backing row is stored: `14:05 checkout p95_latency_ms=2900`. A finding without a check, or a rejected one, is never stored (D28).
+Verified: `FindingMemory.remember` skips anything not `accepted and support == SUPPORTED and check and support_ids` and stores `ledger.get(i).record.to_dict()` for `support_ids` only; running `reference_memory()` on 2026-11-09 printed the three claims and `[{'kind': 'metric', 'ts': '14:05', 'service': 'checkout', 'data': {'metric': 'p95_latency_ms', 'value': 2900}}]` for the third; an unchecked accepted finding gave `remember(...) == 0`. Tests `test_remember_stores_supported_findings_with_backing_rows_only`, `test_unchecked_and_rejected_findings_are_not_stored`. **PASS**
+
+**Q19. The data changes: checkout p95 at 14:05 now reads 1500. What happens to the remembered checkout finding on the next run, and is it still in the store afterwards?**
+Answer: The row is still found (same kind, time, service and metric; identity ignores the value), the check `> 2000 at 14:05` is re-run on 1500 and comes back contradicted, so the finding is dropped with `claim now contradicted: current rows contradict checkout p95_latency_ms > 2000 at 14:05: 14:05 checkout p95_latency_ms=1500 has 1500`. It is removed from the store; the other two are kept (D29, D30).
+Verified: `identity()` excludes the value; `recheck` runs `check_rows(..., what="current")` and returns `DROPPED` for anything but supported; `recall` keeps only `KEPT` entries. Running it with that record replaced printed `[('kept', ''), ('kept', ''), ('dropped', 'claim now contradicted: ... 14:05 checkout p95_latency_ms=1500 has 1500')]` and 2 entries left. **PASS**
+
+**Q20. In `recall_stale`, two stale entries come first. Which evidence ids do the three good findings get, does recall spend query budget, and how many steps and what score does the run end with?**
+Answer: The dropped entries issue no ids, so the kept findings still get `ev_001` (payments deploy), `ev_002` and `ev_003` (pool exhausted logs) and `ev_004` (checkout p95 14:05). Recall is not a step and spends no query: the run uses 1 of 8 queries (the payments error rate, `ev_005` to `ev_008`), 3 steps, passes with score 100 and recall counts 3 kept, 2 dropped (D31, D32).
+Verified: `preload` only calls `ledger.issue` for `KEPT` entries with tool `recall` and step 0 and refuses to run after a step; `quiz_model.py --fake` on 2026-11-09: `control recall_stale (checkout_latency): OK passed=True end=concluded rejected=0 support=supported score=100 audit=ok recall=3/2`; `test_stale_entries_dropped_and_model_told` asserts the ids. **PASS**
+
+**Q21. With a memory holding the three reference findings, the model's first call is `conclude(payments, evidence_ids=["ev_005"])`. Accepted?**
+Answer: No. Recall issued only `ev_001` to `ev_004`, so `ev_005` was never issued in this run and the conclusion is rejected as an unknown id; recalled ids are citable, invented ones still are not. A second conclude citing `ev_001` passes with 0 queries used (D4, D31).
+Verified: `test_recalled_ids_cost_no_query_and_are_citable_but_invented_ids_are_not` asserts 1 refused step, passed, `queries_used == 0` and `evidence_issued == 4`. **PASS**
+
+Day 5 result: 4/4 PASS (21/21 total).

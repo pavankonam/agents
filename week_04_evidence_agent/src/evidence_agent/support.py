@@ -123,23 +123,29 @@ def describe(check: dict[str, Any]) -> str:
     return f"{check['service']} {check['field']} {check['op']} {v}{at}"
 
 
-def check_support(check: dict[str, Any], ids: list[str], ledger: EvidenceLedger) -> SupportResult:
-    """Check a parsed claim against the cited rows only. All ids must already be in the ledger."""
+def check_rows(check: dict[str, Any], rows: list[tuple[str, Record]],
+               what: str = "cited") -> SupportResult:
+    """Check a parsed claim against `rows`, given as (label, record). Used for the cited rows
+    of a finding and, by memory, for the current rows of a remembered finding (D29)."""
     relevant: list[tuple[str, Any]] = []
-    for eid in dict.fromkeys(ids):
-        rec = ledger.get(eid).record
+    for label, rec in rows:
         if rec.service != check["service"]:
             continue
         if check["at"] and rec.ts != check["at"]:
             continue
         val = field_value(rec, check["field"])
         if val is not None:
-            relevant.append((eid, val))
+            relevant.append((label, val))
     if not relevant:
-        return SupportResult(UNSUPPORTED, f"no cited row is about {describe(check)}")
-    backing = [eid for eid, val in relevant if holds(val, check["op"], check["value"])]
+        return SupportResult(UNSUPPORTED, f"no {what} row is about {describe(check)}")
+    backing = [label for label, val in relevant if holds(val, check["op"], check["value"])]
     if backing:
         return SupportResult(SUPPORTED, "", backing)
-    shown = ", ".join(f"{eid} has {val}" for eid, val in relevant)
-    return SupportResult(CONTRADICTED, f"cited rows contradict {describe(check)}: {shown}",
-                         [eid for eid, _ in relevant])
+    shown = ", ".join(f"{label} has {val}" for label, val in relevant)
+    return SupportResult(CONTRADICTED, f"{what} rows contradict {describe(check)}: {shown}",
+                         [label for label, _ in relevant])
+
+
+def check_support(check: dict[str, Any], ids: list[str], ledger: EvidenceLedger) -> SupportResult:
+    """Check a parsed claim against the cited rows only. All ids must already be in the ledger."""
+    return check_rows(check, [(eid, ledger.get(eid).record) for eid in dict.fromkeys(ids)])

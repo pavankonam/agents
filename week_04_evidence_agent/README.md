@@ -2,7 +2,7 @@
 
 An **incident investigation agent** on a **free local model through Ollama** whose every claim has to be backed by something it actually retrieved. It queries synthetic telemetry (logs, metrics, deploys) through tools; every row a tool shows carries an evidence id like `ev_003`; findings and the final conclusion must cite those ids, and code rejects any citation the run never issued. The verdict comes from the scenario's ground truth, never from the model's summary. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 4 (2026-11-08). Three scenarios, each with a trap: `checkout_latency` (a payments deploy shrinks the db pool; a search deploy and a cache warning are red herrings), `config_push` (a gateway config push cuts the upstream timeout to 300 ms; a worker CPU spike is the red herring) and `dependency_outage` (an external email vendor goes down; the first deploy is innocent). The evidence ledger, four query tools and two citing tools, citation checks, claim support checks, a **grading rubric with a score out of 100 per run**, **bounds** (a query budget, an incident time window and an operator kill switch, with every refusal and stop in an audit log with who and why), the agent loop, a CLI, a scripted reference per scenario and twelve controls, a model quiz, 87 tests. Next: verified memory across runs (day 5).
+**Status:** Day 5 (2026-11-09). Three scenarios, each with a trap: `checkout_latency` (a payments deploy shrinks the db pool; a search deploy and a cache warning are red herrings), `config_push` (a gateway config push cuts the upstream timeout to 300 ms; a worker CPU spike is the red herring) and `dependency_outage` (an external email vendor goes down; the first deploy is innocent). The evidence ledger, four query tools and two citing tools, citation checks, claim support checks, a **grading rubric with a score out of 100 per run**, **bounds** (a query budget, an incident time window and an operator kill switch, with every refusal and stop in an audit log with who and why), **verified memory across runs** (findings recalled only after they are re-checked against the current data), the agent loop, a CLI, a scripted reference per scenario and fourteen controls, a model quiz, 103 tests. Next: eval over all scenarios and seeds (day 6).
 
 ## Run it
 
@@ -23,6 +23,10 @@ EVIDENCE_AGENT_MODEL=llama3.2 python3 -m evidence_agent run checkout_latency --m
 python3 -m evidence_agent run checkout_latency --max-queries 3 --audit audit.jsonl
 python3 -m evidence_agent run config_push --kill-file stop.txt
 #   from another terminal, to stop it:  echo "pavan: taking over by hand" > stop.txt
+
+# memory (day 5): the second run recalls the first run's verified findings
+python3 -m evidence_agent run checkout_latency --memory memory.json
+python3 -m evidence_agent run checkout_latency --memory memory.json
 ```
 
 ### Record the real baseline (one command, please run once this week)
@@ -47,7 +51,21 @@ python3 -m pytest -q
 python3 quiz/quiz_model.py --fake
 ```
 
-`--fake` plays the scripted reference of every scenario (must pass with no rejected finding, every check supported, a score of 100 and one `concluded` stop in the audit log) and twelve controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, a finding citing a real but unrelated row, blaming the CPU spike on `config_push`, blaming the innocent first deploy on `dependency_outage`, naming the right service while citing no cause row, running out of a query budget of 2, querying before the incident window, and an operator kill during the third turn. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding, its rubric score and its audit log.
+`--fake` plays the scripted reference of every scenario (must pass with no rejected finding, every check supported, a score of 100 and one `concluded` stop in the audit log) and fourteen controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, a finding citing a real but unrelated row, blaming the CPU spike on `config_push`, blaming the innocent first deploy on `dependency_outage`, naming the right service while citing no cause row, running out of a query budget of 2, querying before the incident window, an operator kill during the third turn, a run that recalls the reference run's three findings and concludes after one query, and the same with two stale entries that must be dropped. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding, its rubric score, its audit log and its recall counts.
+
+## Memory (day 5)
+
+`run --memory PATH` keeps verified findings across runs in a small JSON file.
+
+* **Stored:** after a run, every accepted finding whose check was `supported`, with the rows that backed it. Unchecked findings and conclusions are never stored. A finding with the same check replaces the old one.
+* **Re-checked:** before the next run on the same scenario, each stored row is found again by kind, time, service and metric name (not by value), and the stored check runs again on the current values with the same code that checks live findings.
+* **Recalled or dropped:** a finding that still holds has its rows issued evidence ids before the first turn (no query spent) and is shown to the model with the question. A missing row or a check that no longer holds drops it with the reason, and it is forgotten.
+
+```text
+  recall: dropped 'checkout p95 was above 2s already at 14:00': claim now contradicted: current rows contradict checkout p95_latency_ms > 2000 at 14:00: 14:00 checkout p95_latency_ms=230 has 230
+  recall: kept 'payments v2.3.1 at 14:02 cut the db pool from 50 to 5' as ev_001
+  memory: recalled 3, dropped 2, stored 1 verified finding(s)
+```
 
 ## Bounds and audit (day 4)
 
@@ -107,8 +125,9 @@ A finding may carry a `check`, the claim in a form code can verify against the r
 | `src/evidence_agent/grading.py` | rubric: score out of 100 per run, per criterion detail |
 | `src/evidence_agent/ledger.py` | `EvidenceLedger`: issues `ev_NNN` ids, the only citable ids |
 | `src/evidence_agent/support.py` | claim checks: parse, compare against the cited rows, support status |
+| `src/evidence_agent/memory.py` | `FindingMemory`: store verified findings, re-check them by row identity, recall or drop |
 | `src/evidence_agent/investigation.py` | tools, argument validation, citation checks, findings, verdict |
 | `src/evidence_agent/agent.py` | `run_investigation` loop, system prompt, report printing |
 | `src/evidence_agent/scripted.py` | scripted reference and controls |
-| `src/evidence_agent/cli.py` | `list`, `check`, `run` (with `--max-queries`, `--kill-file`, `--audit`) |
+| `src/evidence_agent/cli.py` | `list`, `check`, `run` (with `--max-queries`, `--kill-file`, `--audit`, `--memory`) |
 | `src/evidence_agent/llm.py` | Ollama client and fake client (copied from week 03) |

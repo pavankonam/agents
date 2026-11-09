@@ -1,12 +1,17 @@
 # Flow: Evidence Agent
 
-Status: **Day 4**. Every box exists in the code.
+Status: **Day 5**. Every box exists in the code.
 
 ```mermaid
 flowchart TD
-    CLI[python3 -m evidence_agent<br/>list, check, run SCENARIO<br/>--json --record PATH<br/>--max-queries N --kill-file PATH --audit PATH] --> RI
-    QM[quiz/quiz_model.py<br/>reference run per scenario, must score 100,<br/>12 controls in --fake over 3 scenarios<br/>with support status, score and audit log,<br/>--record PATH] --> RI
+    CLI[python3 -m evidence_agent<br/>list, check, run SCENARIO<br/>--json --record PATH<br/>--max-queries N --kill-file PATH --audit PATH<br/>--memory PATH] --> RI
+    QM[quiz/quiz_model.py<br/>reference run per scenario, must score 100,<br/>14 controls in --fake over 3 scenarios<br/>with support status, score, audit log<br/>and recall counts,<br/>--record PATH] --> RI
     OP([operator<br/>KillSwitch.trigger who, why<br/>or --kill-file]) -.->|trips| KS{kill switch<br/>tripped?}
+    MEM[(FindingMemory<br/>JSON file)] -->|memory given| RC{recall: per entry of<br/>this scenario, find rows<br/>by identity kind, ts,<br/>service, metric, re-run<br/>check_rows on current values}
+    RC -->|row gone or check<br/>not supported| DR[dropped with reason,<br/>forgotten]
+    RC -->|still supported| PL[Investigation.preload<br/>ledger issues ids for backing rows,<br/>tool recall, step 0, no query,<br/>claims and rows appended<br/>to the question]
+    PL --> RI
+    DR --> RI
     RI[run_investigation<br/>agent.py] -->|before each turn| KS
     KS -->|no| M[LLM client.chat<br/>OllamaClient or FakeClient<br/>6 tools, prompt states budget and window]
     KS -->|yes| KL[finish killed<br/>actor = operator]
@@ -48,9 +53,9 @@ flowchart TD
     END --> REP
     SL --> REP
     TL --> REP
-    REP[Investigation.report<br/>every end goes through _end:<br/>one AuditEntry stop with rule,<br/>actor and reason<br/>root_cause_correct = conclusion service<br/>== scenario ground truth<br/>passed = concluded and correct]
+    REP[memory.remember<br/>accepted supported findings<br/>with backing rows, same check replaces,<br/>CLI saves the file<br/>then Investigation.report<br/>every end goes through _end:<br/>one AuditEntry stop with rule,<br/>actor and reason<br/>root_cause_correct = conclusion service<br/>== scenario ground truth<br/>passed = concluded and correct]
     REP --> GR[grading.grade<br/>no conclusion: 0<br/>root_cause 40, cause_evidence 30<br/>via ledger key in scenario.cause,<br/>no_contradicted 20,<br/>efficiency 10 vs reference_steps + 2]
-    GR --> OUT[report_lines or report_json<br/>accepted and REJECTED findings<br/>with support status, support counts,<br/>conclusion, refused steps,<br/>score N/100 per criterion,<br/>queries N/M, audit lines]
+    GR --> OUT[report_lines or report_json<br/>accepted and REJECTED findings<br/>with support status, support counts,<br/>conclusion, refused steps,<br/>score N/100 per criterion,<br/>queries N/M, audit lines,<br/>recall kept/dropped lines, memory line]
 ```
 
 ## How it works
@@ -66,3 +71,4 @@ flowchart TD
 6. The **score** (`grading.py`, D19 to D21) grades the same run out of 100: right service (40), the conclusion cites at least one cause row, found by mapping each cited id to its record key through the ledger (30), no finding was contradicted, even one that was rejected and fixed (20), and steps within the reference plus 2, losing 2 points per extra step (10). A run without a conclusion scores 0. A run can pass and still score 70 when it names the right service but cites no row that shows the cause.
 7. **Bounds** (`bounds.py`, D23 to D26). `search_logs`, `get_metric` and `list_deploys` spend one query each from a budget (default 8); once it is used up they are refused. `since`/`until` on those tools must be HH:MM inside the scenario's incident window and filter the rows; anything else is refused. Refused queries spend nothing. A **kill switch** tripped by an operator (in code, from another thread, or by creating the `--kill-file`) is checked before every model turn and every tool call; the run ends as `killed` and the pending call never runs.
 8. The **audit log** has one `stop` entry per run, written by the single `_end` choke point with the rule (`concluded`, `no_conclusion`, `step_limit`, `turn_limit`, `killed`), the actor (`agent`, `system` or the operator's name) and the reason, plus a `refused` entry for every budget or window refusal. It is in the printed report, the JSON, and with `--audit PATH` in a JSONL file.
+9. **Memory** (`memory.py`, D28 to D32). With a `FindingMemory` (CLI `--memory PATH`), the run first re-checks every remembered finding of this scenario: each stored row is found again by its identity (kind, time, service, metric name, not the value) and the stored check is run again on the current values with the same `check_rows` code live findings use. A missing row or a check that is no longer `supported` drops the finding with the reason, and it is forgotten. Kept findings have their backing rows issued ids before the first turn (tool `recall`, step 0, no query spent) and are shown to the model with the question, together with how many were dropped. After the run, every accepted finding whose check was supported is stored with its backing rows. Conclusions are never stored.

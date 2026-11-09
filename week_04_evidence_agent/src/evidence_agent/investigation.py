@@ -7,6 +7,9 @@ here from the ledger and the scenario, never from the model's words (D8).
 Bounds (D23 to D26): query tools spend a budget, since/until must lie in the
 incident window, a tripped kill switch ends the run before the next call, and
 every refusal by a bound and every stop is written to the audit log.
+Memory (D28 to D32): findings recalled from earlier runs and re-checked against
+this data are preloaded before the first turn; their rows get ids from the
+ledger like queried rows (tool `recall`, step 0) and cost no query.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from .bounds import (AGENT, DEFAULT_MAX_QUERIES, QUERY_TOOLS, REFUSED, STOP, SYS
                      KillSwitch, window_problem)
 from .grading import grade
 from .ledger import EvidenceLedger
+from .memory import KEPT, Recalled
 from .support import CHECK_SCHEMA, INVALID, SUPPORTED, UNCHECKED, check_support, parse_check
 from .telemetry import KINDS, Scenario
 
@@ -106,6 +110,14 @@ class Report:
     audit: list[AuditEntry] = field(default_factory=list)
     queries_used: int = 0
     max_queries: int = DEFAULT_MAX_QUERIES
+    recall: list[Recalled] = field(default_factory=list)
+    remembered: int = 0
+
+    @property
+    def recall_counts(self) -> tuple[int, int]:
+        """(kept, dropped) remembered findings at the start of the run."""
+        kept = sum(1 for r in self.recall if r.status == KEPT)
+        return kept, len(self.recall) - kept
 
     @property
     def score(self) -> int:
@@ -181,10 +193,39 @@ class Investigation:
         self.findings: list[Finding] = []
         self.conclusion: dict[str, Any] | None = None
         self.end_reason = ""
+        self.recall: list[Recalled] = []
+        self.remembered = 0
 
     @property
     def done(self) -> bool:
         return bool(self.end_reason)
+
+    # ----- memory --------------------------------------------------------
+    def preload(self, recalled: list[Recalled]) -> str:
+        """Issue ids for the backing rows of kept findings and return the text for the model.
+        Must run before the first step; recalled rows spend no query (D31)."""
+        if self.steps:
+            raise RuntimeError("preload must run before the first step")
+        self.recall = list(recalled)
+        lines: list[str] = []
+        for r in self.recall:
+            if r.status != KEPT:
+                continue
+            r.ids = [self.ledger.issue(k, self.scenario.records[k], "recall", 0) for k in r.keys]
+            lines.append(f"- {r.claim}")
+            lines += [f"  [{eid}] {self.ledger.get(eid).record.line()}" for eid in r.ids]
+        dropped = sum(1 for r in self.recall if r.status != KEPT)
+        if not lines and not dropped:
+            return ""
+        text = []
+        if lines:
+            text.append("Findings remembered from earlier runs, re-checked against this data just "
+                        "now. You may cite their evidence ids:")
+            text += lines
+        if dropped:
+            text.append(f"{dropped} remembered finding(s) no longer hold on this data and were "
+                        "dropped; do not rely on them.")
+        return "\n".join(text)
 
     # ----- tool dispatch -------------------------------------------------
     def call(self, name: str, args: Any) -> ToolResult:
@@ -389,4 +430,6 @@ class Investigation:
             audit=list(self.audit),
             queries_used=self.queries_used,
             max_queries=self.max_queries,
+            recall=list(self.recall),
+            remembered=self.remembered,
         )

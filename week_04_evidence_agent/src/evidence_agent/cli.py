@@ -2,7 +2,10 @@
 
 run takes the bounds of day 4: --max-queries, --kill-file (an operator stops the
 run from another terminal by creating the file) and --audit (append every
-refusal and stop as one JSON line each) (D23 to D27).
+refusal and stop as one JSON line each) (D23 to D27). --memory PATH recalls the
+verified findings stored there, re-checked against the scenario's data, and
+stores this run's supported findings back (D28 to D32); a malformed memory
+file is a usage error.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from dataclasses import asdict
 from .agent import report_json, report_lines, run_investigation
 from .bounds import DEFAULT_MAX_QUERIES, FileKillSwitch
 from .llm import DEFAULT_HOST, DEFAULT_MODEL, OllamaClient, check_ollama
+from .memory import FindingMemory
 from .telemetry import SCENARIOS
 
 
@@ -42,6 +46,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--kill-file", metavar="PATH",
                    help="stop the run when this file exists; its first line 'who: why' is audited")
     r.add_argument("--audit", metavar="PATH", help="append audit entries as JSON lines")
+    r.add_argument("--memory", metavar="PATH",
+                   help="recall re-checked findings from this JSON file and store new ones")
     return p
 
 
@@ -70,6 +76,13 @@ def main(argv: list[str], client=None, out=None) -> int:
     if args.max_queries < 1:
         print("--max-queries must be at least 1", file=sys.stderr)
         return 2
+    memory = None
+    if args.memory:
+        try:
+            memory = FindingMemory.load(args.memory)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
     if client is None:
         ok, msg = check_ollama(args.model, DEFAULT_HOST)
         if not ok:
@@ -78,7 +91,9 @@ def main(argv: list[str], client=None, out=None) -> int:
         client = OllamaClient(model=args.model)
     kill = FileKillSwitch(args.kill_file) if args.kill_file else None
     report = run_investigation(client, scenario, max_steps=args.max_steps,
-                               max_queries=args.max_queries, kill_switch=kill)
+                               max_queries=args.max_queries, kill_switch=kill, memory=memory)
+    if memory is not None:
+        memory.save()
     line = report_json(report, model=args.model)
     if args.audit:
         with open(args.audit, "a", encoding="utf-8") as fh:

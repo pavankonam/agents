@@ -13,7 +13,7 @@ def test_fake_mode_passes_and_records(tmp_path):
     out = io.StringIO()
     path = tmp_path / "fake.jsonl"
     assert qm.main(["--fake", "--record", str(path)], out=out) == 0
-    assert "quiz_model (fake): 15/15 OK" in out.getvalue()
+    assert "quiz_model (fake): 17/17 OK" in out.getvalue()
     recs = [json.loads(line) for line in path.read_text().splitlines()]
     assert [r["scenario"] for r in recs] == ["checkout_latency", "config_push", "dependency_outage"]
     assert all(r["model"] == "fake" and r["passed"] and r["score"] == 100 for r in recs)

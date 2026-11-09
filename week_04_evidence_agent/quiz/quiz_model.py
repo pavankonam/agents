@@ -25,7 +25,10 @@ CONTROL_SCORES declares (D22). Three controls run with bounds (D27): a query
 budget of 2 that refuses the third query, a query from before the incident
 window, and an operator kill during the third model turn. Every control must
 also leave exactly the audit log it declares (refusals and the one stop, with
-who and why).
+who and why). Two controls run with memory (D32): the reference run's three
+verified findings are recalled, re-checked and cited with one extra query, and
+the same with two stale entries that must be dropped. Every control must see
+exactly the (kept, dropped) recall counts CONTROL_RECALL declares.
 
 Live runs print the claim support counts per scenario (D13).
 
@@ -46,7 +49,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from evidence_agent.agent import report_json, report_lines, run_investigation  # noqa: E402
 from evidence_agent.llm import DEFAULT_MODEL, FakeClient, OllamaClient, check_ollama  # noqa: E402
 from evidence_agent.scripted import (CONTROL_SCORES, CONTROLS, REFERENCE, audit_tuples,  # noqa: E402
-                                     control_scenario, expected_audit, make_control)
+                                     control_scenario, expected_audit, expected_recall,
+                                     make_control)
 from evidence_agent.telemetry import SCENARIOS  # noqa: E402
 
 
@@ -69,12 +73,15 @@ def run_controls(out) -> int:
         got = (r.passed, r.end_reason, len(r.rejected_findings), got_support, r.score)
         want_score = CONTROL_SCORES[name]
         audit_ok = audit_tuples(r) == expected_audit(name, len(r.steps))
-        ok = got == (must_pass, end, rejected, support, want_score) and audit_ok
+        recall_ok = r.recall_counts == expected_recall(name)
+        ok = got == (must_pass, end, rejected, support, want_score) and audit_ok and recall_ok
         failures += not ok
         print(f"control {name} ({scenario.name}): {'OK' if ok else 'WRONG'} passed={r.passed} "
               f"end={r.end_reason} rejected={len(r.rejected_findings)} "
               f"support={','.join(got_support) or '-'} score={r.score} "
               f"audit={'ok' if audit_ok else 'WRONG'} "
+              f"recall={r.recall_counts[0]}/{r.recall_counts[1]}"
+              f"{'' if recall_ok else ' WRONG'} "
               f"(want {must_pass}, {end}, {rejected}, {','.join(support) or '-'}, "
               f"{want_score})", file=out)
     return failures

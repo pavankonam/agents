@@ -15,6 +15,7 @@ from typing import Any
 
 from .bounds import KillSwitch
 from .llm import FakeClient, LLMResponse, ToolCall
+from .memory import FindingMemory
 
 
 def _call(name: str, **args) -> LLMResponse:
@@ -223,6 +224,55 @@ def control_operator_kill() -> list[LLMResponse]:
     return reference_checkout()
 
 
+def control_recall_reuse() -> list[LLMResponse]:
+    """checkout_latency with the reference run's memory: the 3 recalled findings get
+    ev_001 (payments deploy), ev_002 and ev_003 (pool errors) and ev_004 (checkout p95
+    at 14:05). One query adds the payments error rate (ev_005..ev_008) (D32)."""
+    return [
+        _call("get_metric", service="payments", metric="error_rate"),  # ev_005..ev_008
+        _call("report_finding", claim="payments error rate rose to 0.32 at 14:05",
+              evidence_ids=["ev_007"],
+              check={"service": "payments", "field": "error_rate", "op": ">", "value": 0.3,
+                     "at": "14:05"}),
+        _call("conclude", root_cause_service="payments",
+              summary="Recalled and re-checked: the payments v2.3.1 deploy cut the db pool to 5 "
+                      "and payments cannot get a connection; its error rate rose to 0.32.",
+              evidence_ids=["ev_001", "ev_002", "ev_007"])]
+
+
+def control_recall_stale() -> list[LLMResponse]:
+    """Same run; the memory also holds two entries written against older data (D32)."""
+    return control_recall_reuse()
+
+
+# Two entries written when the data was different: the 14:00 checkout p95 row now
+# reads 230, not 2400, and there is no 14:01 payments deploy any more.
+STALE_ENTRIES: list[dict[str, Any]] = [
+    {"scenario": "checkout_latency", "claim": "checkout p95 was above 2s already at 14:00",
+     "check": {"service": "checkout", "field": "p95_latency_ms", "op": ">", "value": 2000,
+               "at": "14:00"},
+     "rows": [{"kind": "metric", "ts": "14:00", "service": "checkout",
+               "data": {"metric": "p95_latency_ms", "value": 2400}}]},
+    {"scenario": "checkout_latency", "claim": "payments v2.3.0 at 14:01 raised the retry count",
+     "check": {"service": "payments", "field": "version", "op": "==", "value": "v2.3.0",
+               "at": "14:01"},
+     "rows": [{"kind": "deploy", "ts": "14:01", "service": "payments",
+               "data": {"version": "v2.3.0", "note": "retries 3 -> 5"}}]},
+]
+
+
+def reference_memory(stale: bool = False) -> FindingMemory:
+    """An in memory store filled by the checkout reference run (3 supported findings),
+    with the stale entries first when `stale` is set."""
+    from .agent import run_investigation  # imported here: agent is a heavier module
+    from .telemetry import CHECKOUT_LATENCY
+    mem = FindingMemory()
+    run_investigation(FakeClient(reference_checkout()), CHECKOUT_LATENCY, memory=mem)
+    if stale:
+        mem.entries = [dict(e) for e in STALE_ENTRIES] + mem.entries
+    return mem
+
+
 S, C, U, N = "supported", "contradicted", "unsupported", "unchecked"
 
 # name -> (responses factory, must pass, expected end reason, expected rejected findings,
@@ -240,6 +290,8 @@ CONTROLS = {
     "over_budget": (control_over_budget, True, "concluded", 0, (S, S)),
     "out_of_window": (control_out_of_window, True, "concluded", 0, (S, S, S)),
     "operator_kill": (control_operator_kill, False, "killed", 0, ()),
+    "recall_reuse": (control_recall_reuse, True, "concluded", 0, (S,)),
+    "recall_stale": (control_recall_stale, True, "concluded", 0, (S,)),
 }
 
 # which scenario each control runs on (default checkout_latency)
@@ -250,13 +302,19 @@ CONTROL_SCENARIO = {"blame_cpu_spike": "config_push", "blame_first_deploy": "dep
 CONTROL_SCORES = {"text_only": 0, "invented_id": 0, "rejected_then_fixed": 100,
                   "wrong_service": 30, "contradicted_claim": 80, "irrelevant_citation": 100,
                   "blame_cpu_spike": 30, "blame_first_deploy": 30, "cause_not_cited": 70,
-                  "over_budget": 100, "out_of_window": 100, "operator_kill": 0}
+                  "over_budget": 100, "out_of_window": 100, "operator_kill": 0,
+                  "recall_reuse": 100, "recall_stale": 100}
 
 # run options of the bounded controls (D27); the rest run with the defaults
 CONTROL_OPTIONS: dict[str, dict[str, Any]] = {
     "over_budget": {"max_queries": 2},
     "operator_kill": {"kill_on_turn": 3},
+    "recall_reuse": {"memory": "reference"},
+    "recall_stale": {"memory": "stale"},
 }
+
+# (kept, dropped) remembered findings each control must see at the start; others (0, 0) (D32)
+CONTROL_RECALL = {"recall_reuse": (3, 0), "recall_stale": (3, 2)}
 
 # the audit log each control must leave, as (step, event, rule, actor); controls not
 # listed must leave exactly one entry: the stop with their end reason (D26, D27)
@@ -277,12 +335,18 @@ def make_control(name: str) -> tuple[FakeClient, dict[str, Any]]:
     """The scripted client and the run_investigation options for one control."""
     factory = CONTROLS[name][0]
     opts = dict(CONTROL_OPTIONS.get(name, {}))
+    if "memory" in opts:
+        opts["memory"] = reference_memory(stale=opts["memory"] == "stale")
     turn = opts.pop("kill_on_turn", None)
     if turn is None:
         return FakeClient(factory()), opts
     switch = KillSwitch()
     opts["kill_switch"] = switch
     return KillingClient(factory(), switch, turn, KILL_BY, KILL_REASON), opts
+
+
+def expected_recall(name: str) -> tuple[int, int]:
+    return CONTROL_RECALL.get(name, (0, 0))
 
 
 def audit_tuples(report) -> tuple[tuple[int, str, str, str], ...]:
