@@ -30,6 +30,11 @@ verified findings are recalled, re-checked and cited with one extra query, and
 the same with two stale entries that must be dropped. Every control must see
 exactly the (kept, dropped) recall counts CONTROL_RECALL declares.
 
+Two eval checks run in --fake mode (D37): the references replayed on 3 seeded
+variants of every scenario must pass 9/9 with score 100, and the same scripts
+replayed without reading the tool output (memorised ids) must pass only seed 0
+and fail every variant with no_conclusion.
+
 Live runs print the claim support counts per scenario (D13).
 
 --record PATH appends one JSON report per scenario (live or fake), which is how
@@ -46,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from evidence_agent.evaluation import ReplayClient, evaluate  # noqa: E402
 from evidence_agent.agent import report_json, report_lines, run_investigation  # noqa: E402
 from evidence_agent.llm import DEFAULT_MODEL, FakeClient, OllamaClient, check_ollama  # noqa: E402
 from evidence_agent.scripted import (CONTROL_SCORES, CONTROLS, REFERENCE, audit_tuples,  # noqa: E402
@@ -85,6 +91,28 @@ def run_controls(out) -> int:
               f"(want {must_pass}, {end}, {rejected}, {','.join(support) or '-'}, "
               f"{want_score})", file=out)
     return failures
+
+
+EVAL_SEEDS = 3
+
+
+def run_eval_checks(out) -> int:
+    """Seeded variants: replayed references must all pass, memorised ids must fail (D37)."""
+    scenarios = list(SCENARIOS.values())
+    replay = evaluate(lambda base, seed: ReplayClient(REFERENCE[base.name](), base),
+                      scenarios, EVAL_SEEDS, model="fake")
+    memo = evaluate(lambda base, seed: FakeClient(REFERENCE[base.name]()),
+                    scenarios, EVAL_SEEDS, model="memorised")
+    n = len(scenarios) * EVAL_SEEDS
+    ok1 = replay.passed == n and replay.mean_score == 100
+    want = {"no_conclusion": n - len(scenarios)}
+    ok2 = memo.passed == len(scenarios) and memo.failure_kinds() == want
+    print(f"eval replay ({EVAL_SEEDS} seeds): {'OK' if ok1 else 'WRONG'} "
+          f"{replay.passed}/{n} passed, mean score {replay.mean_score:.1f}", file=out)
+    print(f"eval memorised ids ({EVAL_SEEDS} seeds): {'OK' if ok2 else 'WRONG'} "
+          f"{memo.passed}/{n} passed, failure kinds {memo.failure_kinds()} "
+          f"(want {len(scenarios)}/{n}, {want})", file=out)
+    return (not ok1) + (not ok2)
 
 
 def main(argv: list[str] | None = None, out=None) -> int:
@@ -127,7 +155,8 @@ def main(argv: list[str] | None = None, out=None) -> int:
           f" (mean {sum(scores.values()) / len(scores):.0f})", file=out)
     if args.fake:
         failed += run_controls(out)
-    total = len(SCENARIOS) + (len(CONTROLS) if args.fake else 0)
+        failed += run_eval_checks(out)
+    total = len(SCENARIOS) + (len(CONTROLS) + 2 if args.fake else 0)
     print(f"quiz_model ({model}): {total - failed}/{total} OK", file=out)
     return 0 if failed == 0 else 1
 

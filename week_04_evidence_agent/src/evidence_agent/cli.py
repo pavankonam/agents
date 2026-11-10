@@ -6,6 +6,12 @@ refusal and stop as one JSON line each) (D23 to D27). --memory PATH recalls the
 verified findings stored there, re-checked against the scenario's data, and
 stores this run's supported findings back (D28 to D32); a malformed memory
 file is a usage error.
+
+eval runs every scenario (or the --scenario ones) on seeds 0..N-1 of the
+seeded variants and prints a summary, --json or --markdown; --fake replays the
+scripted references instead of a model. It exits 0 when the pass rate reaches
+--min-pass-rate (default 1.0), 1 when it does not, 2 on usage errors and 4
+when Ollama is not ready (D33 to D37).
 """
 
 from __future__ import annotations
@@ -17,8 +23,10 @@ from dataclasses import asdict
 
 from .agent import report_json, report_lines, run_investigation
 from .bounds import DEFAULT_MAX_QUERIES, FileKillSwitch
+from .evaluation import ReplayClient, evaluate
 from .llm import DEFAULT_HOST, DEFAULT_MODEL, OllamaClient, check_ollama
 from .memory import FindingMemory
+from .scripted import REFERENCE
 from .telemetry import SCENARIOS
 
 
@@ -48,7 +56,70 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--audit", metavar="PATH", help="append audit entries as JSON lines")
     r.add_argument("--memory", metavar="PATH",
                    help="recall re-checked findings from this JSON file and store new ones")
+    e = sub.add_parser("eval", help="run scenarios over seeded variants and summarise")
+    e.add_argument("--scenario", action="append", metavar="NAME",
+                   help="only this scenario (repeatable); default all")
+    e.add_argument("--seeds", type=int, default=3, help="seeds 0..N-1 per scenario (0 = unchanged)")
+    e.add_argument("--model", default=DEFAULT_MODEL)
+    e.add_argument("--fake", action="store_true", help="replay the scripted references, no Ollama")
+    e.add_argument("--max-steps", type=int, default=12)
+    e.add_argument("--max-queries", type=int, default=DEFAULT_MAX_QUERIES)
+    e.add_argument("--min-pass-rate", type=float, default=1.0,
+                   help="exit 0 only when the pass rate is at least this (0..1)")
+    fmt = e.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="print the summary as one JSON object")
+    fmt.add_argument("--markdown", action="store_true", help="print the summary as Markdown tables")
+    e.add_argument("--record", metavar="PATH", help="append each run's JSON report to a JSONL file")
     return p
+
+
+def run_eval(args, client_factory=None, out=None) -> int:
+    names = args.scenario or list(SCENARIOS)
+    unknown = [n for n in names if n not in SCENARIOS]
+    if unknown:
+        print(f"unknown scenario(s) {', '.join(unknown)}; scenarios: {', '.join(SCENARIOS)}",
+              file=sys.stderr)
+        return 2
+    if args.seeds < 1 or args.max_steps < 1 or args.max_queries < 1:
+        print("--seeds, --max-steps and --max-queries must be at least 1", file=sys.stderr)
+        return 2
+    if not 0.0 <= args.min_pass_rate <= 1.0:
+        print("--min-pass-rate must be between 0 and 1", file=sys.stderr)
+        return 2
+    model = "fake" if args.fake else args.model
+    if client_factory is None:
+        if args.fake:
+            def client_factory(base, seed):
+                return ReplayClient(REFERENCE[base.name](), base)
+        else:
+            ok, msg = check_ollama(args.model, DEFAULT_HOST)
+            if not ok:
+                print(msg, file=sys.stderr)
+                return 4
+
+            def client_factory(base, seed):
+                return OllamaClient(model=args.model, seed=seed)
+    fh = open(args.record, "a", encoding="utf-8") if args.record else None
+    try:
+        def on_run(report, run):
+            if fh:
+                d = json.loads(report_json(report, model=model))
+                d["seed"], d["kind"] = run.seed, run.kind
+                fh.write(json.dumps(d, sort_keys=True) + "\n")
+        summary = evaluate(client_factory, [SCENARIOS[n] for n in names], args.seeds,
+                           model=model, max_steps=args.max_steps,
+                           max_queries=args.max_queries, on_run=on_run)
+    finally:
+        if fh:
+            fh.close()
+    if args.json:
+        print(json.dumps(summary.to_dict(), sort_keys=True), file=out)
+    elif args.markdown:
+        print(summary.markdown(), end="", file=out)
+    else:
+        for line in summary.lines():
+            print(line, file=out)
+    return 0 if summary.pass_rate >= args.min_pass_rate else 1
 
 
 def main(argv: list[str], client=None, out=None) -> int:
@@ -66,6 +137,9 @@ def main(argv: list[str], client=None, out=None) -> int:
         ok, msg = check_ollama(args.model, DEFAULT_HOST)
         print(msg, file=out)
         return 0 if ok else 4
+    if args.cmd == "eval":
+        factory = (lambda base, seed: client) if client is not None else None
+        return run_eval(args, factory, out)
     scenario = SCENARIOS.get(args.scenario)
     if scenario is None:
         print(f"unknown scenario {args.scenario!r}; scenarios: {', '.join(SCENARIOS)}", file=sys.stderr)

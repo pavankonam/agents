@@ -33,8 +33,9 @@ class OllamaClient:
     """Calls Ollama's /api/chat with native tool support, using only the stdlib."""
 
     def __init__(self, model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST,
-                 temperature: float = 0.0, timeout: float = 120.0):
+                 temperature: float = 0.0, timeout: float = 120.0, seed: int | None = None):
         self.model = model
+        self.seed = seed  # passed to Ollama so an eval seed also fixes sampling (D36)
         self.host = host.rstrip("/")
         self.temperature = temperature
         self.timeout = timeout
@@ -47,6 +48,8 @@ class OllamaClient:
             "stream": False,
             "options": {"temperature": self.temperature},
         }
+        if self.seed is not None:
+            body["options"]["seed"] = self.seed
         req = urllib.request.Request(
             f"{self.host}/api/chat",
             data=json.dumps(body).encode(),

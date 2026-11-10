@@ -42,6 +42,8 @@ class Scenario:
     reference_steps: int = 0
     # the incident window (start, end) as HH:MM; queries outside it are refused (D24)
     window: tuple[str, str] = ("00:00", "23:59")
+    # set on eval variants: the ledger draws ids in a seeded order (D34)
+    id_seed: int | None = None
 
     @property
     def services(self) -> list[str]:

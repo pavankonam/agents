@@ -1,10 +1,14 @@
 # Flow: Evidence Agent
 
-Status: **Day 5**. Every box exists in the code.
+Status: **Day 6**. Every box exists in the code.
 
 ```mermaid
 flowchart TD
     CLI[python3 -m evidence_agent<br/>list, check, run SCENARIO<br/>--json --record PATH<br/>--max-queries N --kill-file PATH --audit PATH<br/>--memory PATH] --> RI
+    EV[python3 -m evidence_agent eval<br/>--seeds N --scenario --fake<br/>--json or --markdown --record<br/>--min-pass-rate] --> VA[variants.variant scenario, seed<br/>seed 0 unchanged, else 3 to 6 INFO<br/>noise rows in the window, same minute<br/>reorder, cause rows remapped,<br/>id_seed for the ledger]
+    VA --> EC[client per run:<br/>OllamaClient seed=seed<br/>or ReplayClient: script ids<br/>rewritten by row line to the<br/>ids this run issued]
+    EC --> RI
+    REP -.->|eval only| ES[EvalSummary<br/>pass rate, mean score,<br/>rejected citations, contradicted,<br/>unsupported, failure kinds,<br/>per scenario table<br/>exit 0 if pass rate >= min]
     QM[quiz/quiz_model.py<br/>reference run per scenario, must score 100,<br/>14 controls in --fake over 3 scenarios<br/>with support status, score, audit log<br/>and recall counts,<br/>--record PATH] --> RI
     OP([operator<br/>KillSwitch.trigger who, why<br/>or --kill-file]) -.->|trips| KS{kill switch<br/>tripped?}
     MEM[(FindingMemory<br/>JSON file)] -->|memory given| RC{recall: per entry of<br/>this scenario, find rows<br/>by identity kind, ts,<br/>service, metric, re-run<br/>check_rows on current values}
@@ -72,3 +76,4 @@ flowchart TD
 7. **Bounds** (`bounds.py`, D23 to D26). `search_logs`, `get_metric` and `list_deploys` spend one query each from a budget (default 8); once it is used up they are refused. `since`/`until` on those tools must be HH:MM inside the scenario's incident window and filter the rows; anything else is refused. Refused queries spend nothing. A **kill switch** tripped by an operator (in code, from another thread, or by creating the `--kill-file`) is checked before every model turn and every tool call; the run ends as `killed` and the pending call never runs.
 8. The **audit log** has one `stop` entry per run, written by the single `_end` choke point with the rule (`concluded`, `no_conclusion`, `step_limit`, `turn_limit`, `killed`), the actor (`agent`, `system` or the operator's name) and the reason, plus a `refused` entry for every budget or window refusal. It is in the printed report, the JSON, and with `--audit PATH` in a JSONL file.
 9. **Memory** (`memory.py`, D28 to D32). With a `FindingMemory` (CLI `--memory PATH`), the run first re-checks every remembered finding of this scenario: each stored row is found again by its identity (kind, time, service, metric name, not the value) and the stored check is run again on the current values with the same `check_rows` code live findings use. A missing row or a check that is no longer `supported` drops the finding with the reason, and it is forgotten. Kept findings have their backing rows issued ids before the first turn (tool `recall`, step 0, no query spent) and are shown to the model with the question, together with how many were dropped. After the run, every accepted finding whose check was supported is stored with its backing rows. Conclusions are never stored.
+10. **Eval** (`variants.py`, `evaluation.py`, D33 to D37). `eval` runs each scenario on seeds 0 to N-1. Seed 0 is the scenario as written. Other seeds add 3 to 6 harmless INFO log rows inside the window, reorder rows that share a minute, and give the ledger a seeded id order, so `ev_001` stops meaning the first row shown; the incident and its cause rows stay the same. Each run gets a failure kind (`pass`, `wrong_root_cause` or the end reason), and the summary reports pass rate, mean score, rejected citations, contradicted and unsupported findings and failure kinds, as lines, `--json` or `--markdown`. With `--fake` the scripted references are replayed by `ReplayClient`, which rewrites each scripted id to the id its row got in this run by reading the tool output, the same thing a model has to do; the same scripts with memorised ids fail every variant.

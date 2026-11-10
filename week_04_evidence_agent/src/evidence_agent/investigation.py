@@ -188,7 +188,7 @@ class Investigation:
         self.kill_switch = kill_switch
         self.queries_used = 0
         self.audit: list[AuditEntry] = []
-        self.ledger = EvidenceLedger()
+        self.ledger = EvidenceLedger(seed=scenario.id_seed)
         self.steps: list[StepLog] = []
         self.findings: list[Finding] = []
         self.conclusion: dict[str, Any] | None = None

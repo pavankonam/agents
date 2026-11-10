@@ -107,3 +107,24 @@ Answer: No. Recall issued only `ev_001` to `ev_004`, so `ev_005` was never issue
 Verified: `test_recalled_ids_cost_no_query_and_are_citable_but_invented_ids_are_not` asserts 1 refused step, passed, `queries_used == 0` and `evidence_issued == 4`. **PASS**
 
 Day 5 result: 4/4 PASS (21/21 total).
+
+
+## Day 6 (2026-11-10)
+
+**Q22. What does `variant(checkout_latency, 1)` change, and which id does `list_deploys` give the payments v2.3.1 deploy on it?**
+Answer: Three INFO noise rows inside 13:45 to 14:15 (13:49 checkout `metrics flushed`, 13:59 search `gc pause 8ms`, 14:01 db `health check ok`), a seeded order among rows that share a minute, and `id_seed=1`, so the ledger draws ids in a seeded order. The cause rows and root cause are unchanged. `list_deploys` shows `[ev_199]` for the search deploy and `[ev_937]` for the payments deploy, instead of `ev_001` and `ev_002`.
+Verified: printed the noise rows and the `list_deploys` output on 2026-11-10; `test_variants_keep_the_incident_and_are_reproducible` checks the noise is INFO, inside the window, time ordered and that the cause rows are the same lines. **PASS**
+
+**Q23. The checkout reference, with its hard coded ids, is played straight on seed 1. How does it end, how many rejected citations, and what does `ReplayClient` do differently?**
+Answer: It ends `no_conclusion` with score 0: its three findings and its conclusion cite ids like `ev_002` that this run never issued, so 4 citing calls are refused, and then the script runs out. `ReplayClient` learns which row each script id named on the base scenario, reads the `[ev_NNN] line` rows this run's tools returned, and rewrites the ids by row, so the run passes with score 100 citing `ev_937, ev_349, ev_169`. Invented ids are passed through and still rejected.
+Verified: `test_memorised_ids_fail_on_a_variant_but_replay_passes` asserts `no_conclusion` and `rejected_citations == 4`, then pass and 100 with different ids; `test_replay_keeps_invented_ids_invented`; `quiz_model.py --fake`: `eval memorised ids (3 seeds): OK 3/9 passed, failure kinds {'no_conclusion': 6}`. **PASS**
+
+**Q24. An eval of checkout over 3 seeds passes 2 of 3 runs. Exit code with the default `--min-pass-rate`, and with 0.6? What does `--json --markdown` give?**
+Answer: Default 1.0: exit 1. With 0.6: 2/3 = 0.67 is at least 0.6, exit 0 (0.7 would give 1). `--json` with `--markdown` is a usage error, exit 2, because the two are a mutually exclusive group.
+Verified: ran `run_eval` with seed 2 replaced by `control_wrong_service` on 2026-11-10: exit 0 at 0.6, 1 at 0.7, summary `2/3 passed (67%)`; that failed run is `no_conclusion` (its scripted ids are not issued on the variant), not `wrong_root_cause`. `test_cli_eval_usage_and_ollama_codes` asserts exit 2 for `--json --markdown`. **PASS**
+
+**Q25. Why does the variant need a seeded ledger order? Would noise rows and same minute reordering alone have changed the ids the references cite?**
+Answer: No. The references query `search_logs` with `level=ERROR`, `get_metric` by name and `list_deploys`; INFO noise never shows up in those, and the reordered same minute rows are not in the same result, so every cited id stayed the same and the memorised script still passed every variant. The seeded ledger order is what makes an id meaningless outside its run (D34).
+Verified: with `id_seed=None` forced on seeds 1 to 3 of all three scenarios, the plain reference passed 9/9 on 2026-11-10; with the seed set it fails all 6 variants. **PASS**
+
+Day 6 result: 4/4 PASS (25/25 total).
