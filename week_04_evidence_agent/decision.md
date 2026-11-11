@@ -221,3 +221,35 @@ Each entry: what was decided, why, and what else was considered. New entries are
 **Why:** A threshold lets the real model eval gate on something realistic (a 4B model will not pass 100%) while the fake eval keeps the strict default. The memorised ids check is the proof that the variants bite: if it ever passed, the noise would have stopped changing ids.
 **Alternatives:** Exit 1 on any failed run (useless for a real small model), exit with the number of failures (exit codes above 125 are special in shells).
 
+## D38. `report`: rebuild the eval summary from recorded JSONL, one summary per model (2026-11-11)
+
+**Decision:** `EvalRun.from_record(d)` rebuilds a run from one recorded JSON report: scenario, seed (0 when absent, so `run --record` and `quiz_model.py --record` lines count too), passed, score, kind (taken from the record, or derived from `passed` and `end_reason` the same way `failure_kind` does), steps, rejected citations recounted from the step log, contradicted and unsupported from `support`, queries used. Noise rows are not stored; they are recomputed with `variant(base, seed)` because a seed always gives the same variant (D34). `summaries_from_records` groups records by `model` in first seen order. CLI `report PATH... [--json | --markdown]`; `--markdown` prints one results table with a row per model, then each model's per scenario and failure kind tables.
+**Why:** The real model numbers are recorded on Pavan's Mac, not by the automation (D11), so the results table has to be rebuilt from files without a model. One function for live and recorded summaries means the README table cannot drift from the data, the lesson of week 03 (its D32 to D34). Grouping by model lets the fake reference and qwen3:4b (and any other model) sit in one table.
+**Alternatives:** Store the whole `EvalRun` in each record (a second schema next to the report; old `run --record` lines would not load), keep only per model Markdown files written at eval time (no way to combine runs from different days or models), parse `fake_eval.md` (text tables are output, not data).
+
+## D39. Day 7 closes without real numbers: a baseline script, report exit codes and a round trip check (2026-11-11)
+
+**Decision:** `results/run_baseline.sh [model] [seeds]` (default qwen3:4b, 3 seeds) checks Ollama, runs `eval --record results/<model>_eval.jsonl --min-pass-rate 0` and rebuilds `results/RESULTS.md` from every `results/*_eval.jsonl` with `report --markdown`; with Ollama down `check` exits 4 and `set -e` stops before anything is written. `results/fake_eval.jsonl` is committed and `results/RESULTS.md` currently holds only the fake row. `report` exits 0 when it printed a report, 2 when a file is missing or a line is not JSON or not a report (needs `scenario` and `passed`), and 3 when the files hold no records, matching week 03's `report`. `quiz_model.py --fake` gains a 20th check: the 9 replayed eval runs, written as JSON reports and read back, rebuild a summary equal to the live one (`to_dict()` equality). A test checks the committed `fake_eval.jsonl` gives the same report as a fresh fake eval.
+**Why:** The automation still cannot reach Ollama on the Mac (connection blocked, checked again on 2026-11-11), so the PRD's day 7 item "real model results in results/" cannot be produced honestly here. Inventing numbers is out; the best close is to make the real baseline one command whose output lands in the same table as the fake one. Exit 0 for a report with failures is deliberate: `report` describes data, `eval --min-pass-rate` is the gate. The round trip check is what makes the rebuilt table trustworthy.
+**Alternatives:** Keep the project open until a real run exists (blocks the weekly cycle, and the same reason held for three weeks), exit 1 from `report` when a run failed (a real 4B model would always exit 1 and the script would need `|| true` around a reporting step).
+
+## Retro (week 04, 2026-11-11)
+
+**What went well**
+* The ledger rule (only ids a tool returned in this run are citable) held from day 1 to day 7 and every later feature reused it instead of adding a new path: claim checks read the cited rows through it, grading maps cited ids to cause rows through it, memory issues recalled ids through it, and variants only had to change its id order to make memorised ids fail.
+* Claim checks run on the cited rows only. That one restriction separated three failure types cleanly (contradicted, unsupported, unchecked) and gave the model error messages that name rows and values it can act on.
+* Bounds went through one `_end` choke point, so every run has exactly one audited stop with who and why. The kill switch control proves the pending call never runs.
+* The eval caught its own blind spot on day 6: noise rows alone changed no cited id, so the memorised reference would have passed every variant. The seeded ledger order and the memorised ids check in the quiz fixed that before any number was published.
+* 119 tests run in under a second; `quiz_model.py --fake` checks 3 references, 14 controls and 3 eval checks (20 in all) on every run.
+
+**What did not**
+* For the fourth week in a row there are no real model numbers. The week 03 retro asked for a baseline command on day 1 and a results file in the repo; the command existed from day 1 (`quiz_model.py --record`) but nothing runs it, because the automation's network cannot reach Ollama on the Mac. The headline question of the week (does a small local model cite what it saw?) is measured only on scripted references.
+* The scenarios are small and hand written (20 to 25 records each). Variants add noise and change ids but never add a new red herring, so a model that learns the three traps learns the whole benchmark.
+* Claim checks are single row comparisons. "p95 went from 230 to 2900" is checked as `> 2000 at 14:05`; a claim about a change, a rate or an order between two events cannot be checked and stays `unchecked`.
+* The grading rubric uses the reference step count, so a correct but longer investigation loses efficiency points even when the extra queries were reasonable.
+
+**Next time**
+* Treat the real baseline as a Pavan action item on day 1, not an automation step: put `run_baseline.sh` (or its equivalent) in the day 1 summary and the root README, and accept that the automation reports fake numbers until the file shows up.
+* Generate distractors per seed (a second innocent deploy, a WARN spike on a healthy service) so variants change difficulty, not only ids.
+* Add two row claims (`before`/`after`, `changed_from`) to the check language before relying on the unchecked count.
+

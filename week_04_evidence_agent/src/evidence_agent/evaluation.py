@@ -24,7 +24,7 @@ from .bounds import DEFAULT_MAX_QUERIES
 from .investigation import CONCLUDE, REPORT_FINDING, Investigation, Report
 from .llm import FakeClient, LLMResponse, ToolCall
 from .support import CONTRADICTED, UNSUPPORTED
-from .telemetry import Scenario
+from .telemetry import SCENARIOS, Scenario
 from .variants import noise_count, variant
 
 PASS = "pass"
@@ -61,6 +61,29 @@ class EvalRun:
     contradicted: int
     unsupported: int
     queries_used: int
+
+    @classmethod
+    def from_record(cls, d: dict[str, Any]) -> "EvalRun":
+        """Rebuild a run from one recorded JSON report (eval, run or quiz_model --record).
+
+        Records without a seed (run and quiz_model write none) count as seed 0.
+        Noise rows are recomputed from the seed, so they are not stored (D38).
+        """
+        name, seed = d["scenario"], int(d.get("seed", 0))
+        base = SCENARIOS.get(name)
+        noise = noise_count(base, variant(base, seed)) if base is not None else 0
+        steps = d.get("steps") or []
+        rejected = sum(1 for s in steps if s.get("tool") in (REPORT_FINDING, CONCLUDE)
+                       and not s.get("ok") and any(e in (s.get("error") or "")
+                                                   for e in _CITATION_ERRORS))
+        support = d.get("support") or {}
+        passed = bool(d.get("passed"))
+        end = d.get("end_reason", "")
+        kind = d.get("kind") or (PASS if passed else end if end != "concluded"
+                                 else WRONG_ROOT_CAUSE)
+        return cls(name, seed, passed, int(d.get("score", 0)), kind, end, len(steps), noise,
+                   rejected, int(support.get(CONTRADICTED, 0)),
+                   int(support.get(UNSUPPORTED, 0)), int(d.get("queries_used", 0)))
 
     @classmethod
     def from_report(cls, report: Report, seed: int, noise: int) -> "EvalRun":
@@ -148,6 +171,36 @@ class EvalSummary:
         rows += ["", "| Failure kind | Runs |", "| --- | --- |"]
         rows += [f"| {k} | {v} |" for k, v in kinds.items()] or ["| none | 0 |"]
         return "\n".join(rows) + "\n"
+
+
+def summaries_from_records(records: list[dict[str, Any]]) -> list[EvalSummary]:
+    """One EvalSummary per model, in the order models first appear (D38)."""
+    by_model: dict[str, list[EvalRun]] = {}
+    for d in records:
+        by_model.setdefault(d.get("model") or "unknown", []).append(EvalRun.from_record(d))
+    out = []
+    for model, runs in by_model.items():
+        summary = EvalSummary(model=model, seeds=len({r.seed for r in runs}))
+        summary.runs = runs
+        out.append(summary)
+    return out
+
+
+def comparison_markdown(summaries: list[EvalSummary], title: str = "Results") -> str:
+    """A results table with one row per model, then each model's per scenario table (D38)."""
+    rows = [f"# {title}", "",
+            "| Model | Runs | Seeds | Passed | Pass rate | Mean score | Rejected citations "
+            "| Contradicted | Unsupported | Failure kinds |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for s in summaries:
+        kinds = ", ".join(f"{k} {v}" for k, v in s.failure_kinds().items()) or "none"
+        rows.append(f"| {s.model} | {len(s.runs)} | {s.seeds} | {s.passed} | "
+                    f"{s.pass_rate:.0%} | {s.mean_score:.1f} | {s.total('rejected_citations')} | "
+                    f"{s.total('contradicted')} | {s.total('unsupported')} | {kinds} |")
+    for s in summaries:
+        body = s.markdown().splitlines()[1:]  # drop the per model "# Eval:" title
+        rows += ["", f"## {s.model}"] + body
+    return "\n".join(rows) + "\n"
 
 
 class ReplayClient(FakeClient):

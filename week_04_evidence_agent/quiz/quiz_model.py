@@ -33,7 +33,9 @@ exactly the (kept, dropped) recall counts CONTROL_RECALL declares.
 Two eval checks run in --fake mode (D37): the references replayed on 3 seeded
 variants of every scenario must pass 9/9 with score 100, and the same scripts
 replayed without reading the tool output (memorised ids) must pass only seed 0
-and fail every variant with no_conclusion.
+and fail every variant with no_conclusion. A third check (D39) rebuilds the
+replay summary from its recorded JSON reports, as `report` does, and it must
+equal the live summary exactly.
 
 Live runs print the claim support counts per scenario (D13).
 
@@ -46,12 +48,13 @@ Exit codes: 0 all pass, 1 some failed, 4 Ollama not ready.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from evidence_agent.evaluation import ReplayClient, evaluate  # noqa: E402
+from evidence_agent.evaluation import ReplayClient, evaluate, summaries_from_records  # noqa: E402
 from evidence_agent.agent import report_json, report_lines, run_investigation  # noqa: E402
 from evidence_agent.llm import DEFAULT_MODEL, FakeClient, OllamaClient, check_ollama  # noqa: E402
 from evidence_agent.scripted import (CONTROL_SCORES, CONTROLS, REFERENCE, audit_tuples,  # noqa: E402
@@ -99,8 +102,15 @@ EVAL_SEEDS = 3
 def run_eval_checks(out) -> int:
     """Seeded variants: replayed references must all pass, memorised ids must fail (D37)."""
     scenarios = list(SCENARIOS.values())
+    records = []
+
+    def keep(report, run):
+        d = json.loads(report_json(report, model="fake"))
+        d["seed"], d["kind"] = run.seed, run.kind
+        records.append(d)
+
     replay = evaluate(lambda base, seed: ReplayClient(REFERENCE[base.name](), base),
-                      scenarios, EVAL_SEEDS, model="fake")
+                      scenarios, EVAL_SEEDS, model="fake", on_run=keep)
     memo = evaluate(lambda base, seed: FakeClient(REFERENCE[base.name]()),
                     scenarios, EVAL_SEEDS, model="memorised")
     n = len(scenarios) * EVAL_SEEDS
@@ -112,7 +122,11 @@ def run_eval_checks(out) -> int:
     print(f"eval memorised ids ({EVAL_SEEDS} seeds): {'OK' if ok2 else 'WRONG'} "
           f"{memo.passed}/{n} passed, failure kinds {memo.failure_kinds()} "
           f"(want {len(scenarios)}/{n}, {want})", file=out)
-    return (not ok1) + (not ok2)
+    rebuilt = summaries_from_records(records)
+    ok3 = len(rebuilt) == 1 and rebuilt[0].to_dict() == replay.to_dict()
+    print(f"report from records: {'OK' if ok3 else 'WRONG'} "
+          f"{len(records)} records rebuild the replay summary exactly", file=out)
+    return (not ok1) + (not ok2) + (not ok3)
 
 
 def main(argv: list[str] | None = None, out=None) -> int:
@@ -156,7 +170,7 @@ def main(argv: list[str] | None = None, out=None) -> int:
     if args.fake:
         failed += run_controls(out)
         failed += run_eval_checks(out)
-    total = len(SCENARIOS) + (len(CONTROLS) + 2 if args.fake else 0)
+    total = len(SCENARIOS) + (len(CONTROLS) + 3 if args.fake else 0)
     print(f"quiz_model ({model}): {total - failed}/{total} OK", file=out)
     return 0 if failed == 0 else 1
 

@@ -2,7 +2,7 @@
 
 An **incident investigation agent** on a **free local model through Ollama** whose every claim has to be backed by something it actually retrieved. It queries synthetic telemetry (logs, metrics, deploys) through tools; every row a tool shows carries an evidence id like `ev_003`; findings and the final conclusion must cite those ids, and code rejects any citation the run never issued. The verdict comes from the scenario's ground truth, never from the model's summary. See [PRD.md](PRD.md) for the plan, [flow.md](flow.md) for how it works and [decision.md](decision.md) for why.
 
-**Status:** Day 6 (2026-11-10). Three scenarios, each with a trap: `checkout_latency` (a payments deploy shrinks the db pool; a search deploy and a cache warning are red herrings), `config_push` (a gateway config push cuts the upstream timeout to 300 ms; a worker CPU spike is the red herring) and `dependency_outage` (an external email vendor goes down; the first deploy is innocent). The evidence ledger, four query tools and two citing tools, citation checks, claim support checks, a **grading rubric with a score out of 100 per run**, **bounds** (a query budget, an incident time window and an operator kill switch, with every refusal and stop in an audit log with who and why), **verified memory across runs** (findings recalled only after they are re-checked against the current data), **an eval over every scenario and seeded variants** (noise rows, row order and evidence id order change per seed, so memorised ids fail), the agent loop, a CLI, a scripted reference per scenario and fourteen controls, a model quiz, 114 tests. Next: real qwen3:4b results and close out (day 7).
+**Status:** Closed on day 7 (2026-11-11). Three scenarios, each with a trap: `checkout_latency` (a payments deploy shrinks the db pool; a search deploy and a cache warning are red herrings), `config_push` (a gateway config push cuts the upstream timeout to 300 ms; a worker CPU spike is the red herring) and `dependency_outage` (an external email vendor goes down; the first deploy is innocent). The evidence ledger, four query tools and two citing tools, citation checks, claim support checks, a **grading rubric with a score out of 100 per run**, **bounds** (a query budget, an incident time window and an operator kill switch, with every refusal and stop in an audit log with who and why), **verified memory across runs** (findings recalled only after they are re-checked against the current data), **an eval over every scenario and seeded variants** (noise rows, row order and evidence id order change per seed, so memorised ids fail), the agent loop, a CLI, a scripted reference per scenario and fourteen controls, a `report` command that rebuilds the results table from recorded runs, a model quiz, 119 tests. The real qwen3:4b numbers still need one local run (see Results).
 
 ## Run it
 
@@ -35,14 +35,20 @@ python3 -m evidence_agent eval --seeds 5 --json --record results/qwen3_4b_eval.j
 python3 -m evidence_agent eval --fake --seeds 3               # scripted references, no Ollama
 ```
 
-### Record the real baseline (one command, please run once this week)
+### Record the real baseline (one command, please run once)
 
 ```bash
-python3 quiz/quiz_model.py --record results/qwen3_4b.jsonl
-python3 -m evidence_agent eval --seeds 3 --markdown > results/qwen3_4b_eval.md
+bash results/run_baseline.sh              # qwen3:4b, 3 seeds per scenario
+bash results/run_baseline.sh llama3.2 5   # any other model, any seeds
 ```
 
-This appends one JSON report per scenario (now three, each with its `score`) to `results/qwen3_4b.jsonl`, with every finding, accepted or rejected, and the conclusion. The daily automation cannot reach Ollama on the Mac, so the real numbers depend on this run (D11).
+It checks Ollama, runs the eval with `--record results/<model>_eval.jsonl` and rebuilds [results/RESULTS.md](results/RESULTS.md) from every `results/*_eval.jsonl`, so the real model lands in the same table as the fake reference. The daily automation cannot reach Ollama on the Mac, so the real numbers depend on this run (D11, D39).
+
+```bash
+# rebuild a table from any recorded runs, no Ollama
+python3 -m evidence_agent report results/*_eval.jsonl --markdown
+python3 -m evidence_agent report results/fake_reference.jsonl --json
+```
 
 | Exit code | Meaning |
 | --- | --- |
@@ -58,7 +64,19 @@ python3 -m pytest -q
 python3 quiz/quiz_model.py --fake
 ```
 
-`--fake` runs two eval checks (replayed references pass 9/9 on 3 seeds; memorised ids fail all 6 variants) and plays the scripted reference of every scenario (must pass with no rejected finding, every check supported, a score of 100 and one `concluded` stop in the audit log) and fourteen controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, a finding citing a real but unrelated row, blaming the CPU spike on `config_push`, blaming the innocent first deploy on `dependency_outage`, naming the right service while citing no cause row, running out of a query budget of 2, querying before the incident window, an operator kill during the third turn, a run that recalls the reference run's three findings and concludes after one query, and the same with two stale entries that must be dropped. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding, its rubric score, its audit log and its recall counts.
+`--fake` runs three eval checks (replayed references pass 9/9 on 3 seeds; memorised ids fail all 6 variants; the recorded replay reports rebuild the same summary) and plays the scripted reference of every scenario (must pass with no rejected finding, every check supported, a score of 100 and one `concluded` stop in the audit log) and fourteen controls: a text only answer, a conclusion citing an invented id, a rejected finding followed by the reference, a conclusion blaming the red herring service, a finding whose cited row contradicts it, a finding citing a real but unrelated row, blaming the CPU spike on `config_push`, blaming the innocent first deploy on `dependency_outage`, naming the right service while citing no cause row, running out of a query budget of 2, querying before the incident window, an operator kill during the third turn, a run that recalls the reference run's three findings and concludes after one query, and the same with two stale entries that must be dropped. Each must end exactly as declared in `src/evidence_agent/scripted.py`, including the support status of every finding, its rubric score, its audit log and its recall counts.
+
+## Results (day 7)
+
+| Model | Runs | Seeds | Passed | Pass rate | Mean score | Rejected citations | Contradicted | Unsupported | Failure kinds |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| fake (scripted references, replayed by row) | 9 | 3 | 9 | 100% | 100.0 | 0 | 0 | 0 | none |
+| fake, memorised ids (control) | 9 | 3 | 3 | 33% | 33.3 | 26 | 0 | 0 | no_conclusion 6 |
+| qwen3:4b | not run yet | | | | | | | | |
+
+The first row is [results/RESULTS.md](results/RESULTS.md), rebuilt by `report` from [results/fake_eval.jsonl](results/fake_eval.jsonl). The memorised ids row is the quiz control that proves variants change ids (D37). The qwen3:4b row fills in when `bash results/run_baseline.sh` is run once with Ollama up.
+
+`report PATH... [--json | --markdown]` rebuilds the eval summary from recorded JSON reports (from `eval --record`, `run --record` or `quiz_model.py --record`), one summary per model; a line with no seed counts as seed 0 and noise rows are recomputed from the seed. Exit 0 printed, 2 a file is missing or a line is not a report, 3 no records.
 
 ## Eval (day 6)
 
@@ -156,6 +174,11 @@ A finding may carry a `check`, the claim in a form code can verify against the r
 | `src/evidence_agent/agent.py` | `run_investigation` loop, system prompt, report printing |
 | `src/evidence_agent/scripted.py` | scripted reference and controls |
 | `src/evidence_agent/variants.py` | seeded scenario variants: noise rows, same minute reorder, ledger id seed |
-| `src/evidence_agent/evaluation.py` | `evaluate`, `EvalRun`, `EvalSummary` (lines, JSON, Markdown), `ReplayClient` |
-| `src/evidence_agent/cli.py` | `list`, `check`, `run` (with `--max-queries`, `--kill-file`, `--audit`, `--memory`), `eval` |
+| `src/evidence_agent/evaluation.py` | `evaluate`, `EvalRun` (also `from_record`), `EvalSummary` (lines, JSON, Markdown), `summaries_from_records`, `comparison_markdown`, `ReplayClient` |
+| `src/evidence_agent/cli.py` | `list`, `check`, `run` (with `--max-queries`, `--kill-file`, `--audit`, `--memory`), `eval`, `report` |
+| `results/run_baseline.sh` | records the real model eval and rebuilds `results/RESULTS.md` |
 | `src/evidence_agent/llm.py` | Ollama client and fake client (copied from week 03) |
+
+## Retro
+
+Short version (full retro at the end of [decision.md](decision.md)): the ledger rule held all week and every feature reused it; claim checks on cited rows only gave clean failure types; one audited stop per run; the eval caught its own blind spot (noise alone changed no ids). Missing: real model numbers for the fourth week, small hand written scenarios, single row claims only. Next: the real baseline as a day 1 action for Pavan, seeded distractors, two row claims.

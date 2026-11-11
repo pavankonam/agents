@@ -12,6 +12,12 @@ seeded variants and prints a summary, --json or --markdown; --fake replays the
 scripted references instead of a model. It exits 0 when the pass rate reaches
 --min-pass-rate (default 1.0), 1 when it does not, 2 on usage errors and 4
 when Ollama is not ready (D33 to D37).
+
+report rebuilds the eval summary from recorded JSONL files (eval, run or
+quiz_model --record), one summary per model, with no model needed: lines,
+--json or --markdown (a results table with one row per model). It exits 0
+when it printed a report, 2 when a file is missing or a line is not a JSON
+report and 3 when the files hold no records (D38, D39).
 """
 
 from __future__ import annotations
@@ -23,7 +29,7 @@ from dataclasses import asdict
 
 from .agent import report_json, report_lines, run_investigation
 from .bounds import DEFAULT_MAX_QUERIES, FileKillSwitch
-from .evaluation import ReplayClient, evaluate
+from .evaluation import ReplayClient, comparison_markdown, evaluate, summaries_from_records
 from .llm import DEFAULT_HOST, DEFAULT_MODEL, OllamaClient, check_ollama
 from .memory import FindingMemory
 from .scripted import REFERENCE
@@ -70,7 +76,60 @@ def build_parser() -> argparse.ArgumentParser:
     fmt.add_argument("--json", action="store_true", help="print the summary as one JSON object")
     fmt.add_argument("--markdown", action="store_true", help="print the summary as Markdown tables")
     e.add_argument("--record", metavar="PATH", help="append each run's JSON report to a JSONL file")
+    rp = sub.add_parser("report", help="summarise recorded JSONL files per model, no Ollama")
+    rp.add_argument("paths", nargs="+", metavar="PATH")
+    rfmt = rp.add_mutually_exclusive_group()
+    rfmt.add_argument("--json", action="store_true", help="print one JSON object per model")
+    rfmt.add_argument("--markdown", action="store_true",
+                      help="print a results table with one row per model")
     return p
+
+
+EXIT_NO_RECORDS = 3
+
+
+def read_records(paths: list[str]) -> list[dict]:
+    """Every JSON report in the files, in order. Raises ValueError with file and line."""
+    records = []
+    for path in paths:
+        try:
+            text = open(path, encoding="utf-8").read()
+        except OSError as exc:
+            raise ValueError(f"cannot read {path}: {exc.strerror or exc}") from None
+        for n, line in enumerate(text.splitlines(), 1):
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                raise ValueError(f"{path}:{n}: not JSON") from None
+            if not isinstance(d, dict) or "scenario" not in d or "passed" not in d:
+                raise ValueError(f"{path}:{n}: not a report (needs scenario and passed)")
+            records.append(d)
+    return records
+
+
+def run_report(args, out=None) -> int:
+    try:
+        records = read_records(args.paths)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if not records:
+        print("no records in " + ", ".join(args.paths), file=sys.stderr)
+        return EXIT_NO_RECORDS
+    summaries = summaries_from_records(records)
+    if args.json:
+        print(json.dumps([s.to_dict() for s in summaries], sort_keys=True), file=out)
+    elif args.markdown:
+        print(comparison_markdown(summaries), end="", file=out)
+    else:
+        for i, s in enumerate(summaries):
+            if i:
+                print("", file=out)
+            for line in s.lines():
+                print(line, file=out)
+    return 0
 
 
 def run_eval(args, client_factory=None, out=None) -> int:
@@ -137,6 +196,8 @@ def main(argv: list[str], client=None, out=None) -> int:
         ok, msg = check_ollama(args.model, DEFAULT_HOST)
         print(msg, file=out)
         return 0 if ok else 4
+    if args.cmd == "report":
+        return run_report(args, out)
     if args.cmd == "eval":
         factory = (lambda base, seed: client) if client is not None else None
         return run_eval(args, factory, out)

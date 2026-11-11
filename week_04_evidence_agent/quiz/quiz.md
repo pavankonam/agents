@@ -128,3 +128,24 @@ Answer: No. The references query `search_logs` with `level=ERROR`, `get_metric` 
 Verified: with `id_seed=None` forced on seeds 1 to 3 of all three scenarios, the plain reference passed 9/9 on 2026-11-10; with the seed set it fails all 6 variants. **PASS**
 
 Day 6 result: 4/4 PASS (25/25 total).
+
+
+## Day 7 (2026-11-11)
+
+**Q26. `report` is given a line written by `run --record` (no `seed`, no `kind`) for a run that concluded `search` on `checkout_latency`. Which seed, noise rows and failure kind does it get?**
+Answer: Seed 0, because a missing seed counts as the scenario as written; noise rows 0, recomputed from `variant(base, 0)`, which is the base itself; kind `wrong_root_cause`, derived from `passed` false and `end_reason` `concluded`, the same rule as `failure_kind` (D38).
+Verified: `EvalRun.from_record` uses `int(d.get("seed", 0))`, `noise_count(base, variant(base, seed))` and the same derivation; `test_failures_and_rejected_citations_survive_the_round_trip` asserts `(0, "wrong_root_cause", False, 0)` for `control_wrong_service`, and `(0, "no_conclusion", False, 0)` with 1 rejected citation for `control_invented_id`. **PASS**
+
+**Q27. Recorded eval lines do not store noise rows. How does `report` still show `noise 3` for checkout seed 1, and is the rebuilt summary the same as the live one?**
+Answer: Variants are deterministic per seed (D34), so `report` rebuilds `variant(checkout_latency, 1)` and counts the extra rows: 3, as in Q22. Every other field comes from the record, so the rebuilt `EvalRun` equals the live one field by field and the summary's `to_dict()` is identical.
+Verified: `report results/fake_eval.jsonl` on 2026-11-11 printed `checkout_latency seed 1: PASS pass score 100 steps 7 noise 3`, `config_push seed 1 ... noise 3` and `dependency_outage seed 1 ... noise 5`; `test_runs_rebuilt_from_records_match_the_live_eval` compares `asdict` for all 6 runs; `quiz_model.py --fake`: `report from records: OK 9 records rebuild the replay summary exactly`. **PASS**
+
+**Q28. Exit codes of `report` for: an empty file, a missing file, a line `{"x": 1}`, and a file where every run failed?**
+Answer: 3 (no records), 2 (cannot read), 2 (not a report: needs `scenario` and `passed`), and 0, because `report` describes data and only `eval --min-pass-rate` gates (D39).
+Verified: `test_cli_report_formats_and_exit_codes` asserts 3, 2, 2 (and 2 for a non JSON line and for `--json --markdown`); `run_report` returns 0 after printing whatever the pass rate; a blank only file printed `no records in /tmp/e.jsonl` and exit 3 on 2026-11-11. **PASS**
+
+**Q29. Pavan runs `bash results/run_baseline.sh` while Ollama is stopped. What is printed, what exit code, and does `results/RESULTS.md` change?**
+Answer: `check` prints that Ollama is not reachable at http://localhost:11434 and exits 4; `set -e` stops the script there, so it exits 4, no `qwen3_4b_eval.jsonl` is written and `RESULTS.md` is unchanged. With Ollama up it records `results/qwen3_4b_eval.jsonl` and rebuilds `RESULTS.md` with a fake row and a qwen3:4b row.
+Verified: ran it on 2026-11-11 from the automation (where Ollama is unreachable): `Ollama is not reachable ... Connection refused`, rc=4, the md5 of `RESULTS.md` the same before and after, and no new file in `results/`. **PASS**
+
+Day 7 result: 4/4 PASS (29/29 total).
